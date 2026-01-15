@@ -2,12 +2,20 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { FileDropzone, FileList, ResultsTable } from './components';
 import { UploadedFile, ParsedPackingList } from './types';
 import { generateId, extractPoNumber } from './utils/conversion';
-import { parseFile } from './utils/parser';
+import { parseFile, OcrProgress } from './utils/parser';
 import { downloadExcel, exportMultipleToExcel } from './utils/excelExport';
 import { WAREHOUSES, DEFAULT_WAREHOUSE } from './utils/constants';
 import { loadInventoryFromExcel, getInventoryCount, clearInventory } from './utils/inventoryLookup';
 
 type WeightType = 'actual' | 'theoretical';
+
+interface OcrState {
+  isRunning: boolean;
+  fileId: string | null;
+  fileName: string;
+  progress: number;
+  status: string;
+}
 
 function App() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -17,6 +25,14 @@ function App() {
   const [weightType, setWeightType] = useState<WeightType>('actual');
   const [isProcessing, setIsProcessing] = useState(false);
   const [inventoryCount, setInventoryCount] = useState(0);
+  const [ocrState, setOcrState] = useState<OcrState>({
+    isRunning: false,
+    fileId: null,
+    fileName: '',
+    progress: 0,
+    status: '',
+  });
+  const [ocrWarnings, setOcrWarnings] = useState<string[]>([]);
   const inventoryInputRef = useRef<HTMLInputElement>(null);
 
   // Load inventory count on mount
@@ -59,6 +75,70 @@ function App() {
     });
   }, [files]);
 
+  const handleOcrProgress = useCallback((progress: OcrProgress) => {
+    setOcrState((prev) => ({
+      ...prev,
+      progress: progress.progress,
+      status: progress.status,
+    }));
+  }, []);
+
+  const processFileWithOcr = useCallback(async (uploadedFile: UploadedFile) => {
+    setOcrState({
+      isRunning: true,
+      fileId: uploadedFile.id,
+      fileName: uploadedFile.name,
+      progress: 0,
+      status: 'Starting OCR...',
+    });
+
+    try {
+      const parseResult = await parseFile(uploadedFile.file, {
+        poNumber: poNumber || undefined,
+        useOcr: true,
+        onOcrProgress: handleOcrProgress,
+      });
+
+      if (parseResult.error) {
+        throw new Error(parseResult.error);
+      }
+
+      if (parseResult.result) {
+        // Add warning if OCR confidence was low
+        if (parseResult.ocrWarning) {
+          setOcrWarnings((prev) => [...prev, `${uploadedFile.name}: ${parseResult.ocrWarning}`]);
+        }
+
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === uploadedFile.id
+              ? { ...f, status: 'completed' as const, result: parseResult.result }
+              : f
+          )
+        );
+
+        setResults((prev) => [...prev, parseResult.result!]);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === uploadedFile.id
+            ? { ...f, status: 'error' as const, error: errorMessage }
+            : f
+        )
+      );
+    } finally {
+      setOcrState({
+        isRunning: false,
+        fileId: null,
+        fileName: '',
+        progress: 0,
+        status: '',
+      });
+    }
+  }, [poNumber, handleOcrProgress]);
+
   const handleConvert = useCallback(async () => {
     const pendingFiles = files.filter((f) => f.status === 'pending');
 
@@ -67,6 +147,7 @@ function App() {
     }
 
     setIsProcessing(true);
+    setOcrWarnings([]);
 
     // Update status to processing
     setFiles((prev) =>
@@ -77,23 +158,44 @@ function App() {
 
     // Process each file
     const newResults: ParsedPackingList[] = [];
+    const filesNeedingOcr: UploadedFile[] = [];
 
     for (const uploadedFile of pendingFiles) {
       try {
-        const result = await parseFile(uploadedFile.file, poNumber || undefined);
-        newResults.push(result);
+        const parseResult = await parseFile(uploadedFile.file, {
+          poNumber: poNumber || undefined,
+        });
 
-        // Update file with result
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === uploadedFile.id
-              ? { ...f, status: 'completed' as const, result }
-              : f
-          )
-        );
+        if (parseResult.needsOcr) {
+          // Mark as needing OCR, will process after
+          filesNeedingOcr.push(uploadedFile);
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === uploadedFile.id
+                ? { ...f, status: 'pending' as const, error: 'Needs OCR - scanned PDF detected' }
+                : f
+            )
+          );
+        } else if (parseResult.error) {
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === uploadedFile.id
+                ? { ...f, status: 'error' as const, error: parseResult.error }
+                : f
+            )
+          );
+        } else if (parseResult.result) {
+          newResults.push(parseResult.result);
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === uploadedFile.id
+                ? { ...f, status: 'completed' as const, result: parseResult.result }
+                : f
+            )
+          );
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
         setFiles((prev) =>
           prev.map((f) =>
             f.id === uploadedFile.id
@@ -106,7 +208,12 @@ function App() {
 
     setResults((prev) => [...prev, ...newResults]);
     setIsProcessing(false);
-  }, [files, poNumber]);
+
+    // Auto-process files needing OCR
+    for (const file of filesNeedingOcr) {
+      await processFileWithOcr(file);
+    }
+  }, [files, poNumber, processFileWithOcr]);
 
   const handleExport = useCallback(() => {
     if (results.length === 0) return;
@@ -131,6 +238,7 @@ function App() {
     setFiles([]);
     setResults([]);
     setPoNumber('');
+    setOcrWarnings([]);
   }, []);
 
   const handleInventoryUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,7 +249,7 @@ function App() {
       const count = await loadInventoryFromExcel(file);
       setInventoryCount(getInventoryCount());
       alert(`Loaded ${count} inventory IDs. Total: ${getInventoryCount()}`);
-    } catch (error) {
+    } catch {
       alert('Failed to load inventory file. Make sure it has an "Inventory ID" column.');
     }
 
@@ -161,6 +269,32 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* OCR Progress Modal */}
+      {ocrState.isRunning && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              Running OCR on Scanned PDF
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              {ocrState.fileName}
+            </p>
+            <div className="mb-2">
+              <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${ocrState.progress}%` }}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">{ocrState.status}</p>
+            <p className="text-xs text-amber-600 mt-3">
+              OCR may take 10-30 seconds per page. Please wait...
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-4">
@@ -207,6 +341,23 @@ function App() {
 
       {/* Main Content */}
       <main className="max-w-5xl mx-auto px-4 py-8">
+        {/* OCR Warnings */}
+        {ocrWarnings.length > 0 && (
+          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <h4 className="text-sm font-medium text-amber-800 mb-2">
+              OCR Accuracy Warnings
+            </h4>
+            <ul className="text-xs text-amber-700 space-y-1">
+              {ocrWarnings.map((warning, i) => (
+                <li key={i}>{warning}</li>
+              ))}
+            </ul>
+            <p className="text-xs text-amber-600 mt-2">
+              Please verify the extracted data before exporting.
+            </p>
+          </div>
+        )}
+
         {/* Upload Section */}
         <section className="mb-8">
           <FileDropzone onFilesSelected={handleFilesSelected} />
@@ -290,18 +441,18 @@ function App() {
             <div className="mt-4 flex gap-3">
               <button
                 onClick={handleConvert}
-                disabled={!hasPendingFiles || isProcessing}
+                disabled={!hasPendingFiles || isProcessing || ocrState.isRunning}
                 className={`
                   px-4 py-2 rounded-lg font-medium text-sm
                   ${
-                    hasPendingFiles && !isProcessing
+                    hasPendingFiles && !isProcessing && !ocrState.isRunning
                       ? 'bg-blue-600 text-white hover:bg-blue-700'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                   }
                   transition-colors flex items-center gap-2
                 `}
               >
-                {isProcessing && (
+                {(isProcessing || ocrState.isRunning) && (
                   <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
                     <circle
                       className="opacity-25"
@@ -318,11 +469,11 @@ function App() {
                     />
                   </svg>
                 )}
-                {isProcessing ? 'Processing...' : 'Convert Files'}
+                {isProcessing ? 'Processing...' : ocrState.isRunning ? 'Running OCR...' : 'Convert Files'}
               </button>
               <button
                 onClick={handleClear}
-                disabled={isProcessing}
+                disabled={isProcessing || ocrState.isRunning}
                 className="px-4 py-2 rounded-lg font-medium text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
               >
                 Clear All
@@ -367,6 +518,9 @@ function App() {
           <div className="text-center py-12">
             <p className="text-gray-500">
               Upload packing list files from Wuu Jing or Yuen Chang to get started.
+            </p>
+            <p className="text-xs text-gray-400 mt-2">
+              Supports text-based PDFs and scanned PDFs (via OCR)
             </p>
           </div>
         )}

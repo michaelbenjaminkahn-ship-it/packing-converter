@@ -3,6 +3,7 @@ import { PackingListItem, ParsedPackingList, Supplier } from '../types';
 import { detectSupplier, findPackingListPage } from './detection';
 import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs } from './conversion';
 import { VENDOR_CODES } from './constants';
+import { extractTextWithOcr, checkOcrAccuracy, OcrProgress } from './ocr';
 
 // Configure PDF.js worker - must match pdfjs-dist package version (4.8.69)
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.worker.min.mjs`;
@@ -220,8 +221,11 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
     throw new Error(`Failed to read PDF: ${err instanceof Error ? err.message : 'Unknown error'}`);
   }
 
-  if (pages.length === 0 || pages.every(p => !p.trim())) {
-    throw new Error('PDF appears to be empty or contains only images (no text could be extracted)');
+  const hasText = pages.some(p => p.trim().length > 50);
+
+  if (!hasText) {
+    // Signal that OCR is needed
+    throw new Error('OCR_NEEDED: PDF contains only images');
   }
 
   // Find the packing list page
@@ -256,3 +260,80 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
     totalNetWeightLbs,
   };
 }
+
+/**
+ * Parse a PDF using OCR (for scanned/image-based PDFs)
+ */
+export async function parsePdfWithOcr(
+  file: File,
+  poNumber: string,
+  onProgress?: (progress: OcrProgress) => void
+): Promise<ParsedPackingList & { ocrConfidence: number; ocrWarning?: string }> {
+  // Run OCR on all pages
+  const ocrResults = await extractTextWithOcr(file, onProgress);
+
+  // Check accuracy
+  const accuracy = checkOcrAccuracy(ocrResults);
+
+  // Combine all text from OCR results
+  const pages = ocrResults.map((r) => r.text);
+
+  if (pages.every((p) => !p.trim())) {
+    throw new Error('OCR could not extract any text from the PDF');
+  }
+
+  // Find the packing list page
+  const packingListPage = findPackingListPage(pages);
+
+  if (!packingListPage) {
+    throw new Error('Could not identify packing list page after OCR');
+  }
+
+  // Detect supplier
+  const supplier = detectSupplier(packingListPage.text);
+
+  // Parse items from the packing list
+  const items = parsePackingListFromText(packingListPage.text, supplier, poNumber);
+
+  if (items.length === 0) {
+    const preview = packingListPage.text.substring(0, 300).replace(/\s+/g, ' ');
+    throw new Error(
+      `Could not parse items from OCR text. Supplier: ${supplier}. ` +
+      `Confidence: ${Math.round(accuracy.averageConfidence)}%. ` +
+      `Preview: "${preview}..."`
+    );
+  }
+
+  // Calculate totals
+  const totalGrossWeightLbs = items.reduce((sum, item) => sum + item.grossWeightLbs, 0);
+  const totalNetWeightLbs = items.reduce((sum, item) => sum + item.containerQtyLbs, 0);
+
+  // Build warning message if accuracy is low
+  let ocrWarning: string | undefined;
+  if (!accuracy.isAcceptable) {
+    ocrWarning = `Low OCR confidence (${Math.round(accuracy.averageConfidence)}%). Please verify the extracted data.`;
+  } else if (accuracy.lowConfidencePages.length > 0) {
+    ocrWarning = `Pages ${accuracy.lowConfidencePages.join(', ')} had low OCR confidence. Please verify.`;
+  }
+
+  return {
+    supplier,
+    vendorCode: VENDOR_CODES[supplier] || '',
+    poNumber,
+    items,
+    totalGrossWeightLbs,
+    totalNetWeightLbs,
+    ocrConfidence: accuracy.averageConfidence,
+    ocrWarning,
+  };
+}
+
+/**
+ * Check if an error indicates OCR is needed
+ */
+export function needsOcr(error: Error): boolean {
+  return error.message.startsWith('OCR_NEEDED:');
+}
+
+// Re-export OCR progress type for consumers
+export type { OcrProgress };
