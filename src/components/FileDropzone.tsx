@@ -103,7 +103,7 @@ export function FileDropzone({
             </p>
           </div>
           <p className="text-xs text-gray-400 mt-2">
-            Supports PDF and Excel files (.pdf, .xlsx, .xls)
+            Supports multiple PDF and Excel files (.pdf, .xlsx, .xls)
           </p>
         </div>
       </label>
