@@ -46,8 +46,9 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   // Detect supplier from sheet content
   const supplier = detectSupplier(sheetText);
 
-  // Use provided PO, or extracted from any sheet
-  const finalPoNumber = poNumber || extractedPo || 'UNKNOWN';
+  // Use provided PO (if valid), or extracted from any sheet
+  const validPoNumber = poNumber && poNumber !== 'UNKNOWN' ? poNumber : '';
+  const finalPoNumber = validPoNumber || extractedPo || 'UNKNOWN';
   console.log('[parseExcel] finalPoNumber decision: poNumber param=', JSON.stringify(poNumber), 'extractedPo=', JSON.stringify(extractedPo), '-> using:', finalPoNumber);
 
   // Use warehouse from best sheet, or from any sheet if not found
