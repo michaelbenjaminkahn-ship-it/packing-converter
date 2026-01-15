@@ -19,7 +19,7 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   }
 
   // Convert sheet to text for detection
-  const sheetText = bestSheet.data.map(row => row.join(' ')).join('\n');
+  const sheetText = bestSheet.data.map(row => (row || []).join(' ')).join('\n');
 
   // Detect supplier from sheet content
   const supplier = detectSupplier(sheetText);
@@ -82,7 +82,7 @@ function findPackingListSheet(workbook: XLSX.WorkBook): { name: string; data: un
 
     const sheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
-    const text = data.map(row => (row as unknown[]).join(' ')).join('\n');
+    const text = data.map(row => row ? (row as unknown[]).join(' ') : '').join('\n');
     const score = scorePageAsPackingList(text);
 
     if (!bestSheet || score > bestSheet.score) {
@@ -113,9 +113,9 @@ function extractPoFromExcel(data: unknown[][]): string {
   // Search first 15 rows for PO pattern
   for (let i = 0; i < Math.min(data.length, 15); i++) {
     const row = data[i];
-    if (!row) continue;
+    if (!row || !Array.isArray(row)) continue;
 
-    const rowText = row.map(cell => String(cell || '')).join(' ');
+    const rowText = row.map(cell => String(cell ?? '')).join(' ');
 
     // Pattern: "ORDER NO.: 001772" or "ORDER NO: 001772"
     const orderNoMatch = rowText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*(\d{4,6})/i);
@@ -146,9 +146,9 @@ function extractWarehouseFromExcel(data: unknown[][]): string {
   // Search first 15 rows for destination
   for (let i = 0; i < Math.min(data.length, 15); i++) {
     const row = data[i];
-    if (!row) continue;
+    if (!row || !Array.isArray(row)) continue;
 
-    const rowText = row.map(cell => String(cell || '')).join(' ');
+    const rowText = row.map(cell => String(cell ?? '')).join(' ');
 
     // Use the existing extractWarehouse function
     const warehouse = extractWarehouse(rowText);
@@ -173,7 +173,8 @@ function parseWuuJingExcel(data: unknown[][], poNumber: string): PackingListItem
     return parseExcelWithoutHeaders(data, 'wuu-jing', poNumber);
   }
 
-  const headers = data[headerRowIndex].map(h => String(h || '').toLowerCase().trim());
+  const headerRow = data[headerRowIndex] || [];
+  const headers = headerRow.map(h => String(h ?? '').toLowerCase().trim());
 
   // Map column indices for Wuu Jing
   const colMap = {
@@ -191,10 +192,10 @@ function parseWuuJingExcel(data: unknown[][], poNumber: string): PackingListItem
   // Parse data rows
   for (let i = headerRowIndex + 1; i < data.length; i++) {
     const row = data[i];
-    if (!row || row.length === 0) continue;
+    if (!row || !Array.isArray(row) || row.length === 0) continue;
 
     // Skip total rows
-    const firstCell = String(row[0] || '').toLowerCase();
+    const firstCell = String(row[0] ?? '').toLowerCase();
     if (firstCell.includes('total') || firstCell.includes('subtotal')) continue;
 
     // Get size string
@@ -251,7 +252,8 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
     return parseExcelWithoutHeaders(data, 'yuen-chang', poNumber);
   }
 
-  const headers = data[headerRowIndex].map(h => String(h || '').toLowerCase().trim());
+  const headerRow = data[headerRowIndex] || [];
+  const headers = headerRow.map(h => String(h ?? '').toLowerCase().trim());
 
   // Map column indices for Yuen Chang
   const colMap = {
@@ -271,9 +273,9 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
   // Parse data rows
   for (let i = headerRowIndex + 1; i < data.length; i++) {
     const row = data[i];
-    if (!row || row.length === 0) continue;
+    if (!row || !Array.isArray(row) || row.length === 0) continue;
 
-    const rowText = row.map(cell => String(cell || '')).join(' ');
+    const rowText = row.map(cell => String(cell ?? '')).join(' ');
 
     // Check for section headers that indicate finish changes
     if (rowText.includes('304/304L')) {
@@ -288,7 +290,7 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
     }
 
     // Skip container/subtotal rows
-    const firstCell = String(row[0] || '').toLowerCase();
+    const firstCell = String(row[0] ?? '').toLowerCase();
     if (firstCell.includes('container') || firstCell.includes('total') ||
         firstCell.includes('subtotal') || firstCell.includes('excel order')) continue;
 
@@ -343,9 +345,9 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
 function extractFinishFromExcel(data: unknown[][], beforeRow: number): string {
   for (let i = 0; i < beforeRow; i++) {
     const row = data[i];
-    if (!row) continue;
+    if (!row || !Array.isArray(row)) continue;
 
-    const rowText = row.map(cell => String(cell || '')).join(' ').toUpperCase();
+    const rowText = row.map(cell => String(cell ?? '')).join(' ').toUpperCase();
 
     if (rowText.includes('NO.1') || rowText.includes('NO 1') || rowText.includes('#1')) {
       return '#1';
@@ -366,9 +368,9 @@ function extractFinishFromExcel(data: unknown[][], beforeRow: number): string {
 function findHeaderRow(data: unknown[][], requiredKeywords: string[]): number {
   for (let i = 0; i < Math.min(data.length, 25); i++) {
     const row = data[i];
-    if (!row) continue;
+    if (!row || !Array.isArray(row)) continue;
 
-    const rowText = row.map(cell => String(cell || '').toLowerCase()).join(' ');
+    const rowText = row.map(cell => String(cell ?? '').toLowerCase()).join(' ');
     const matches = requiredKeywords.filter(kw => rowText.includes(kw)).length;
 
     if (matches >= 2) {
@@ -384,7 +386,7 @@ function findHeaderRow(data: unknown[][], requiredKeywords: string[]): number {
  */
 function findColumnIndex(headers: string[], possibleNames: string[]): number {
   for (const name of possibleNames) {
-    const index = headers.findIndex(h => h.includes(name));
+    const index = headers.findIndex(h => h && h.includes(name));
     if (index >= 0) return index;
   }
   return -1;
@@ -402,7 +404,7 @@ function parseExcelWithoutHeaders(
 
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
-    if (!row || row.length < 3) continue;
+    if (!row || !Array.isArray(row) || row.length < 3) continue;
 
     // Look for size pattern in any cell
     for (let j = 0; j < row.length; j++) {
