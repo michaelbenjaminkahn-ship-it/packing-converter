@@ -89,17 +89,44 @@ export function parseWuuJingSize(sizeStr: string): ParsedSize | null {
 }
 
 /**
- * Parse Yuen Chang size format: "22GA*48"*120"" or "22GA(48"*120")"
+ * Parse Yuen Chang size format: "22GA*48"*120"" or "22GA x 48" x 120"" or "22GA(48"*120")"
  */
 export function parseYuenChangSize(sizeStr: string): ParsedSize | null {
-  // Match pattern like: 22GA*48"*120" or 22GA(48"*120")
-  const match = sizeStr.match(/(\d+)(?:GA)?\s*[*×x(]\s*(\d+)["']?\s*[*×x]\s*(\d+)["']?/i);
+  // Normalize the string - remove extra spaces and standardize separators
+  const normalized = sizeStr.replace(/\s+/g, ' ').trim();
+
+  // Try multiple patterns for flexibility
+  // Pattern 1: 26GA x 48" x 120" (with spaces around separator)
+  // Pattern 2: 22GA*48"*120" (no spaces)
+  // Pattern 3: 22GA(48"*120") (parentheses format)
+
+  // More flexible regex that handles various separator styles
+  const match = normalized.match(/(\d+)\s*(?:GA)?\s*[*×xX(\s]\s*(\d+)[""']?\s*[*×xX)\s]\s*(\d+)[""']?/i);
   if (match) {
     const gauge = match[1] + 'GA';
     const width = parseFloat(match[2]);
     const length = parseFloat(match[3]);
 
     const thickness = GAUGE_TO_DECIMAL[gauge] || GAUGE_TO_DECIMAL[match[1]];
+
+    if (thickness && !isNaN(width) && !isNaN(length)) {
+      return {
+        thickness,
+        width,
+        length,
+        thicknessFormatted: formatThickness(thickness),
+      };
+    }
+  }
+
+  // Fallback: try to extract numbers in sequence
+  const numbers = normalized.match(/(\d+)\s*GA[^0-9]*(\d+)[^0-9]*(\d+)/i);
+  if (numbers) {
+    const gauge = numbers[1] + 'GA';
+    const width = parseFloat(numbers[2]);
+    const length = parseFloat(numbers[3]);
+
+    const thickness = GAUGE_TO_DECIMAL[gauge] || GAUGE_TO_DECIMAL[numbers[1]];
 
     if (thickness && !isNaN(width) && !isNaN(length)) {
       return {
