@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { FileDropzone, FileList, ResultsTable } from './components';
+import { FileDropzone, FileList } from './components';
+import { EditableResultsTable } from './components/EditableResultsTable';
 import { UploadedFile, ParsedPackingList } from './types';
 import { generateId, extractPoNumber } from './utils/conversion';
 import { parseFile, OcrProgress } from './utils/parser';
@@ -264,6 +265,14 @@ function App() {
     setInventoryCount(0);
   }, []);
 
+  const handleResultUpdate = useCallback((index: number, updatedResult: ParsedPackingList) => {
+    setResults((prev) => {
+      const newResults = [...prev];
+      newResults[index] = updatedResult;
+      return newResults;
+    });
+  }, []);
+
   const hasPendingFiles = files.some((f) => f.status === 'pending');
   const hasResults = results.length > 0;
 
@@ -507,7 +516,12 @@ function App() {
 
             <div className="space-y-6">
               {results.map((result, index) => (
-                <ResultsTable key={index} result={result} warehouse={warehouse} />
+                <EditableResultsTable
+                  key={index}
+                  result={result}
+                  warehouse={warehouse}
+                  onUpdate={(updatedResult) => handleResultUpdate(index, updatedResult)}
+                />
               ))}
             </div>
           </section>
