@@ -252,22 +252,28 @@ export function EditableResultsTable({
           <thead className="bg-gray-50">
             <tr>
               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                #
+                Line #
               </th>
               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Inventory ID
               </th>
               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Lot/Serial Nbr
+                Lot/Serial
               </th>
               <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                PC
+                Piece Count
               </th>
               <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Gross Wt (lbs)
+                Gross Weight
               </th>
               <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Net Wt (lbs)
+                OrderQty
+              </th>
+              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Container
+              </th>
+              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Unit Cost
               </th>
               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Heat #
@@ -276,50 +282,69 @@ export function EditableResultsTable({
                 Warehouse
               </th>
               <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                UOM
+              </th>
+              <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Actions
               </th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {result.items.map((item, index) => (
-              <tr key={`${item.lineNumber}-${index}`} className="hover:bg-gray-50">
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
-                  {item.lineNumber}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
-                  {renderEditableCell(index, 'inventoryId', item.inventoryId, false, true)}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-700">
-                  {renderEditableCell(index, 'lotSerialNbr', item.lotSerialNbr, false, true)}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
-                  {renderEditableCell(index, 'pieceCount', item.pieceCount, true)}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
-                  {renderEditableCell(index, 'grossWeightLbs', item.grossWeightLbs, true)}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
-                  {renderEditableCell(index, 'containerQtyLbs', item.containerQtyLbs, true)}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
-                  {renderEditableCell(index, 'heatNumber', item.heatNumber || '')}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-700">
-                  {warehouse}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-sm text-center">
-                  <button
-                    onClick={() => deleteRow(index)}
-                    className="text-red-600 hover:text-red-800 p-1"
-                    title="Delete row"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {result.items.map((item, index) => {
+              // Calculate unit cost: (grossWeight / pieceCount) * 100 / 10000
+              const unitCost = item.pieceCount > 0
+                ? Math.round((item.grossWeightLbs / item.pieceCount) * 100) / 10000
+                : 0;
+
+              return (
+                <tr key={`${item.lineNumber}-${index}`} className="hover:bg-gray-50">
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    {item.lineNumber}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                    {renderEditableCell(index, 'inventoryId', item.inventoryId, false, true)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-700">
+                    {renderEditableCell(index, 'lotSerialNbr', item.lotSerialNbr, false, true)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                    {renderEditableCell(index, 'pieceCount', item.pieceCount, true)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                    {renderEditableCell(index, 'grossWeightLbs', item.grossWeightLbs, true)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
+                    {item.containerQtyLbs.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
+                    {item.containerQtyLbs.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 text-right font-mono">
+                    {unitCost.toFixed(4)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    {renderEditableCell(index, 'heatNumber', item.heatNumber || '')}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-700">
+                    {warehouse}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500 text-center">
+                    LB
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-center">
+                    <button
+                      onClick={() => deleteRow(index)}
+                      className="text-red-600 hover:text-red-800 p-1"
+                      title="Delete row"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
           <tfoot className="bg-gray-50">
             <tr>
@@ -332,7 +357,10 @@ export function EditableResultsTable({
               <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
                 {result.totalNetWeightLbs.toLocaleString()}
               </td>
-              <td colSpan={3}></td>
+              <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
+                {result.totalNetWeightLbs.toLocaleString()}
+              </td>
+              <td colSpan={5}></td>
             </tr>
           </tfoot>
         </table>
