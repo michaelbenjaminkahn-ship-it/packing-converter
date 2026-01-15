@@ -161,72 +161,77 @@ function extractPoFromExcel(data: unknown[][]): string {
   for (let i = 0; i < Math.min(data.length, 20); i++) {
     const row = data[i];
     if (row && Array.isArray(row)) {
-      console.log(`  Row ${i}:`, row.map(c => String(c ?? '')).join(' | '));
+      console.log(`  Row ${i}:`, row.map(c => `[${typeof c}:${String(c ?? '')}]`).join(' | '));
     }
   }
 
-  // FIRST: Search header area for explicit ORDER patterns (most reliable)
-  console.log('[PO Extract] Searching for ORDER patterns in all rows...');
+  // Search all rows for ORDER patterns
+  console.log('[PO Extract] Searching for ORDER patterns...');
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
 
-    const rowText = row.map(cell => String(cell ?? '')).join(' ');
-
-    // Pattern: "EXCEL ORDER # 001726" or "EXCEL ORDER #001726" (Yuen Chang format)
-    const excelOrderMatch = rowText.match(/EXCEL\s*ORDER\s*#?\s*:?\s*0*(\d{3,6})/i);
-    if (excelOrderMatch) {
-      console.log('[PO Extract] Found EXCEL ORDER pattern in row', i, ':', rowText, '-> PO:', excelOrderMatch[1]);
-      return excelOrderMatch[1];
-    }
-
-    // Pattern: "EXCEL METALS LLC ORDER NO.: 001837" (Wuu Jing format)
-    const excelMetalsMatch = rowText.match(/EXCEL\s*METALS.*ORDER\s*NO\.?\s*:?\s*0*(\d{3,6})/i);
-    if (excelMetalsMatch) {
-      console.log('[PO Extract] Found EXCEL METALS pattern in row', i, ':', rowText, '-> PO:', excelMetalsMatch[1]);
-      return excelMetalsMatch[1];
-    }
-
-    // Pattern: "ORDER NO.: 001772" or "ORDER NO: 001772" - but NOT "INVOICE NO"
-    if (rowText.toUpperCase().includes('ORDER') && !rowText.toUpperCase().includes('INVOICE NO')) {
-      const orderNoMatch = rowText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*0*(\d{3,6})/i);
-      if (orderNoMatch) {
-        console.log('[PO Extract] Found ORDER NO pattern in row', i, ':', rowText, '-> PO:', orderNoMatch[1]);
-        return orderNoMatch[1];
-      }
-    }
-
-    // Check cell by cell - number might be in adjacent cell
+    // Check each cell individually first (more reliable than joining)
     for (let j = 0; j < row.length; j++) {
-      const cellText = String(row[j] ?? '').trim();
-      const cellUpper = cellText.toUpperCase();
+      const cell = row[j];
+      const cellStr = String(cell ?? '').trim();
+      const cellUpper = cellStr.toUpperCase();
 
-      // Check if this cell ends with ORDER NO pattern (number in next cell)
-      if (cellUpper.includes('ORDER') && (cellUpper.endsWith('NO.') || cellUpper.endsWith('NO.:') ||
-          cellUpper.endsWith('NO:') || cellUpper.endsWith('NO') || cellUpper.endsWith('#'))) {
-        console.log('[PO Extract] Found ORDER cell at row', i, 'col', j, ':', cellText);
-        // Look at next cells for the number
-        for (let k = j + 1; k < Math.min(j + 3, row.length); k++) {
+      // Skip empty cells
+      if (!cellStr) continue;
+
+      // Pattern 1: Cell contains "EXCEL ORDER # 001726" (Yuen Chang)
+      if (cellUpper.includes('EXCEL') && cellUpper.includes('ORDER')) {
+        // Try to extract number from this cell
+        const match = cellStr.match(/ORDER\s*#?\s*:?\s*0*(\d{3,6})/i);
+        if (match) {
+          console.log('[PO Extract] Found EXCEL ORDER in cell at row', i, 'col', j, ':', cellStr, '-> PO:', match[1]);
+          return match[1];
+        }
+      }
+
+      // Pattern 2: Cell contains "ORDER NO.:" and number might be in same cell or next cell
+      if (cellUpper.includes('ORDER') && (cellUpper.includes('NO') || cellUpper.includes('#'))) {
+        // Try to get number from same cell first
+        const sameCell = cellStr.match(/ORDER\s*(?:NO\.?|#)\s*:?\s*0*(\d{3,6})/i);
+        if (sameCell) {
+          console.log('[PO Extract] Found ORDER NO with number in cell at row', i, 'col', j, ':', cellStr, '-> PO:', sameCell[1]);
+          return sameCell[1];
+        }
+
+        // Check if number is in adjacent cells
+        console.log('[PO Extract] Found ORDER cell at row', i, 'col', j, ':', cellStr, '- checking adjacent cells');
+        for (let k = j + 1; k < Math.min(j + 4, row.length); k++) {
           const nextCell = row[k];
-          // Handle both string and number types
-          const nextValue = typeof nextCell === 'number' ? nextCell : String(nextCell ?? '');
-          const numStr = String(nextValue).replace(/^0+/, '');
-          console.log('[PO Extract]   Next cell', k, ':', nextCell, '(type:', typeof nextCell, ') -> numStr:', numStr);
-          if (/^\d{3,6}$/.test(numStr)) {
-            console.log('[PO Extract] Found PO in adjacent cell:', numStr);
-            return numStr;
+          const nextType = typeof nextCell;
+          let numValue: string;
+
+          if (nextType === 'number') {
+            // Excel might store PO as number (1772 instead of "001772")
+            numValue = String(nextCell);
+          } else {
+            numValue = String(nextCell ?? '').trim().replace(/^0+/, '');
+          }
+
+          console.log('[PO Extract]   Cell', k, ':', nextCell, '(type:', nextType, ') -> numValue:', numValue);
+
+          // Check if it's a valid PO number (3-6 digits)
+          if (/^\d{3,6}$/.test(numValue)) {
+            console.log('[PO Extract] Found PO in adjacent cell:', numValue);
+            return numValue;
           }
         }
       }
+    }
 
-      // Check if cell has full pattern
-      if (cellUpper.includes('ORDER') && !cellUpper.includes('INVOICE')) {
-        const cellMatch = cellText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*0*(\d{3,6})/i);
-        if (cellMatch) {
-          console.log('[PO Extract] Found full ORDER pattern in cell at row', i, ':', cellText, '-> PO:', cellMatch[1]);
-          return cellMatch[1];
-        }
-      }
+    // Also try joining the row and matching (backup approach)
+    const rowText = row.map(cell => String(cell ?? '')).join(' ');
+
+    // Flexible pattern: "EXCEL" ... "ORDER" ... number
+    const flexMatch = rowText.match(/EXCEL.*ORDER\s*(?:NO\.?|#)?\s*:?\s*0*(\d{3,6})/i);
+    if (flexMatch) {
+      console.log('[PO Extract] Found flexible EXCEL ORDER pattern in row', i, ':', rowText.substring(0, 100), '-> PO:', flexMatch[1]);
+      return flexMatch[1];
     }
   }
 
