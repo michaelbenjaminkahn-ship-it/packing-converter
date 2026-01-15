@@ -825,45 +825,78 @@ export async function parsePdfWithOcr(
     throw new Error('OCR could not extract any text from the PDF');
   }
 
-  // Find the packing list page
-  const packingListPage = findPackingListPage(pages);
+  // NEW APPROACH: Try parsing each page and use the one with most items
+  // This is more reliable than keyword-based page detection when OCR quality is low
+  let bestResult: { pageNum: number; items: PackingListItem[]; supplier: Supplier; text: string } | null = null;
 
-  if (!packingListPage) {
-    throw new Error('Could not identify packing list page after OCR');
+  for (let i = 0; i < pages.length; i++) {
+    const pageText = pages[i];
+    if (!pageText.trim()) continue;
+
+    const pageSupplier = detectSupplier(pageText);
+    try {
+      const pageItems = parsePackingListFromText(pageText, pageSupplier, poNumber);
+      if (pageItems.length > 0) {
+        if (!bestResult || pageItems.length > bestResult.items.length) {
+          bestResult = {
+            pageNum: i + 1,
+            items: pageItems,
+            supplier: pageSupplier,
+            text: pageText,
+          };
+        }
+      }
+    } catch {
+      // Page couldn't be parsed, continue to next
+    }
   }
 
-  // Detect supplier
-  const supplier = detectSupplier(packingListPage.text);
+  // Fallback to keyword-based page detection if no items found
+  if (!bestResult) {
+    const packingListPage = findPackingListPage(pages);
+    if (!packingListPage) {
+      throw new Error('Could not identify packing list page after OCR');
+    }
 
-  // Parse items from the packing list
-  const items = parsePackingListFromText(packingListPage.text, supplier, poNumber);
+    const supplier = detectSupplier(packingListPage.text);
+    const items = parsePackingListFromText(packingListPage.text, supplier, poNumber);
 
-  if (items.length === 0) {
-    const preview = packingListPage.text.substring(0, 300).replace(/\s+/g, ' ');
-    throw new Error(
-      `Could not parse items from OCR text. Supplier: ${supplier}. ` +
-      `Confidence: ${Math.round(accuracy.averageConfidence)}%. ` +
-      `Preview: "${preview}..."`
-    );
+    if (items.length === 0) {
+      const preview = packingListPage.text.substring(0, 300).replace(/\s+/g, ' ');
+      throw new Error(
+        `Could not parse items from OCR text. Supplier: ${supplier}. ` +
+        `Confidence: ${Math.round(accuracy.averageConfidence)}%. ` +
+        `Preview: "${preview}..."`
+      );
+    }
+
+    bestResult = {
+      pageNum: packingListPage.pageNumber,
+      items,
+      supplier,
+      text: packingListPage.text,
+    };
   }
+
+  const { items, supplier, text: packingListText } = bestResult;
 
   // Calculate totals
   const totalGrossWeightLbs = items.reduce((sum, item) => sum + item.grossWeightLbs, 0);
   const totalNetWeightLbs = items.reduce((sum, item) => sum + item.containerQtyLbs, 0);
 
   // Get warehouse from first item or extract from text
-  const warehouse = items[0]?.warehouse || extractWarehouse(packingListPage.text);
+  const warehouse = items[0]?.warehouse || extractWarehouse(packingListText);
 
   // Auto-detect PO if not provided or is UNKNOWN
   let finalPoNumber = poNumber;
   if (!poNumber || poNumber === 'UNKNOWN') {
     // Try to extract from bundle numbers (Wuu Jing)
-    const bundlePo = extractPoFromBundles(packingListPage.text);
+    const bundlePo = extractPoFromBundles(packingListText);
     if (bundlePo) {
       finalPoNumber = bundlePo;
     } else {
       // Try to extract from text (explicit PO patterns)
-      const textPo = extractPoNumber(packingListPage.text);
+      const textPo = extractPoNumber(packingListText);
       finalPoNumber = textPo || '';
     }
   }
