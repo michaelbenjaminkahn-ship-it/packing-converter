@@ -63,6 +63,9 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   const totalGrossWeightLbs = items.reduce((sum, item) => sum + item.grossWeightLbs, 0);
   const totalNetWeightLbs = items.reduce((sum, item) => sum + item.containerQtyLbs, 0);
 
+  // Get unique container numbers
+  const containers = [...new Set(items.map(item => item.containerNumber).filter(Boolean))] as string[];
+
   return {
     supplier: detectedSupplier,
     vendorCode: VENDOR_CODES[detectedSupplier] || '',
@@ -71,6 +74,7 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
     totalGrossWeightLbs,
     totalNetWeightLbs,
     warehouse,
+    containers,
   };
 }
 
@@ -235,6 +239,7 @@ function parseWuuJingExcel(data: unknown[][], poNumber: string): PackingListItem
     size: findColumnIndex(headers, ['size', 'specification']),
     pc: findColumnIndex(headers, ['pc', 'pcs']),
     bundleNo: findColumnIndex(headers, ['bundle no', 'bundle no.', 'bundle']),
+    containerNo: findColumnIndex(headers, ['container no', 'container no.', 'container']),
     netWeight: findColumnIndex(headers, ['n\'weight', 'nweight', 'n weight', 'net']),
     grossWeight: findColumnIndex(headers, ['g\'weight', 'gweight', 'g weight', 'gross']),
   };
@@ -261,6 +266,7 @@ function parseWuuJingExcel(data: unknown[][], poNumber: string): PackingListItem
     const lineNo = colMap.no >= 0 ? parseInt(String(row[colMap.no]), 10) : items.length + 1;
     const pc = colMap.pc >= 0 ? parseInt(String(row[colMap.pc]), 10) : 1;
     const bundleNo = colMap.bundleNo >= 0 ? String(row[colMap.bundleNo] || '') : '';
+    const containerNo = colMap.containerNo >= 0 ? String(row[colMap.containerNo] || '') : '';
     let netWeight = colMap.netWeight >= 0 ? parseFloat(String(row[colMap.netWeight])) : 0;
     let grossWeight = colMap.grossWeight >= 0 ? parseFloat(String(row[colMap.grossWeight])) : netWeight;
 
@@ -286,6 +292,7 @@ function parseWuuJingExcel(data: unknown[][], poNumber: string): PackingListItem
       containerQtyLbs: netWeight,
       rawSize: sizeStr,
       finish,
+      containerNumber: containerNo,
     });
   }
 
@@ -322,6 +329,8 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
 
   // Track current finish (can change with section headers)
   let currentFinish = '2B';
+  // Track current container number
+  let currentContainer = '';
 
   // Parse data rows
   for (let i = headerRowIndex + 1; i < data.length; i++) {
@@ -329,6 +338,14 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
     if (!row || !Array.isArray(row) || row.length === 0) continue;
 
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
+    const rowTextLower = rowText.toLowerCase();
+
+    // Check for container number header (e.g., "CONTAINER NO. FFAU2098727")
+    const containerMatch = rowText.match(/CONTAINER\s*NO\.?\s*:?\s*([A-Z]{4}\d{6,7}|\w+\d+)/i);
+    if (containerMatch) {
+      currentContainer = containerMatch[1].toUpperCase();
+      continue; // Skip container header rows
+    }
 
     // Check for section headers that indicate finish changes
     if (rowText.includes('304/304L')) {
@@ -342,11 +359,9 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
       continue; // Skip section header rows
     }
 
-    // Skip container/subtotal/order rows - check entire row text since column A might be empty
-    const rowTextLower = rowText.toLowerCase();
-    if (rowTextLower.includes('container no') || rowTextLower.includes('total') ||
-        rowTextLower.includes('subtotal') || rowTextLower.includes('excel order') ||
-        rowTextLower.includes('yc reference')) continue;
+    // Skip subtotal/order rows - check entire row text since column A might be empty
+    if (rowTextLower.includes('total') || rowTextLower.includes('subtotal') ||
+        rowTextLower.includes('excel order') || rowTextLower.includes('yc reference')) continue;
 
     // Get size string
     const sizeStr = colMap.size >= 0 ? String(row[colMap.size] || '') : '';
@@ -387,6 +402,7 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
       containerQtyLbs: netWeight,
       rawSize: sizeStr,
       finish: currentFinish,
+      containerNumber: currentContainer,
     });
   }
 

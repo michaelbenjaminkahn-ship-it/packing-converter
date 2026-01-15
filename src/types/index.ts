@@ -11,6 +11,7 @@ export interface PackingListItem {
   rawSize: string;
   warehouse?: string;
   finish?: string;
+  containerNumber?: string;
 }
 
 export interface ParsedPackingList {
@@ -21,6 +22,7 @@ export interface ParsedPackingList {
   totalGrossWeightLbs: number;
   totalNetWeightLbs: number;
   warehouse?: string;
+  containers?: string[]; // List of unique container numbers
 }
 
 export interface UploadedFile {
@@ -47,12 +49,12 @@ export interface AcumaticaRow {
   pieceCount: number;
   heatNumber: string;
   grossWeight: number;
-  orderQty: string;
-  containerQty: number;
-  unitCost: string;
+  orderQty: number;
+  container: number;
+  unitCost: number;
   warehouse: string;
   uom: string;
-  orderLineNbr: string;
+  orderLineNbr: number;
 }
 
 export interface PageScore {
