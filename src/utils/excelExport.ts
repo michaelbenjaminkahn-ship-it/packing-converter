@@ -52,9 +52,10 @@ function getWeight(item: PackingListItem, weightType: WeightType): { gross: numb
 export function toAcumaticaRows(
   packingList: ParsedPackingList,
   warehouse: string = DEFAULT_WAREHOUSE,
-  weightType: WeightType = 'actual'
+  weightType: WeightType = 'actual',
+  lineNumberStart: number = 1
 ): AcumaticaRow[] {
-  return packingList.items.map((item) => {
+  return packingList.items.map((item, index) => {
     const weights = getWeight(item, weightType);
     return {
       orderNumber: packingList.poNumber,
@@ -64,12 +65,12 @@ export function toAcumaticaRows(
       pieceCount: item.pieceCount,
       heatNumber: item.heatNumber,
       grossWeight: weights.gross,
-      orderQty: '',
-      containerQty: weights.net,
-      unitCost: '',
+      orderQty: weights.net, // Net weight as OrderQty
+      container: weights.net, // Net weight as Container
+      unitCost: Math.round((weights.gross / item.pieceCount) * 100) / 10000, // Unit cost per piece
       warehouse,
       uom: 'LB',
-      orderLineNbr: '',
+      orderLineNbr: lineNumberStart + index,
     };
   });
 }
@@ -97,7 +98,7 @@ export function exportToExcel(
       row.heatNumber,
       row.grossWeight,
       row.orderQty,
-      row.containerQty,
+      row.container,
       row.unitCost,
       row.warehouse,
       row.uom,
@@ -159,6 +160,50 @@ export function downloadExcel(
 }
 
 /**
+ * Split packing list by container and download separate files
+ */
+export function downloadByContainer(
+  packingList: ParsedPackingList,
+  warehouse: string = DEFAULT_WAREHOUSE,
+  weightType: WeightType = 'actual'
+): void {
+  // Get unique container numbers
+  const containers = [...new Set(packingList.items.map(item => item.containerNumber).filter(Boolean))];
+
+  if (containers.length <= 1) {
+    // Only one or no containers, download as single file
+    const containerNum = containers[0] || 'ALL';
+    const filename = `PO${packingList.poNumber}_Container_${containerNum}.xlsx`;
+    downloadExcel(packingList, warehouse, weightType, filename);
+    return;
+  }
+
+  // Multiple containers - create separate files
+  containers.forEach((containerNum) => {
+    const containerItems = packingList.items.filter(item => item.containerNumber === containerNum);
+
+    const containerPackingList: ParsedPackingList = {
+      ...packingList,
+      items: containerItems,
+      totalGrossWeightLbs: containerItems.reduce((sum, item) => sum + item.grossWeightLbs, 0),
+      totalNetWeightLbs: containerItems.reduce((sum, item) => sum + item.containerQtyLbs, 0),
+    };
+
+    const blob = exportToExcel(containerPackingList, warehouse, weightType);
+    const url = URL.createObjectURL(blob);
+
+    const filename = `PO${packingList.poNumber}_Container_${containerNum}.xlsx`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  });
+}
+
+/**
  * Export multiple packing lists to a single Excel file with multiple sheets
  */
 export function exportMultipleToExcel(
@@ -182,7 +227,7 @@ export function exportMultipleToExcel(
         row.heatNumber,
         row.grossWeight,
         row.orderQty,
-        row.containerQty,
+        row.container,
         row.unitCost,
         row.warehouse,
         row.uom,

@@ -4,7 +4,7 @@ import { EditableResultsTable } from './components/EditableResultsTable';
 import { UploadedFile, ParsedPackingList } from './types';
 import { generateId, extractPoNumber } from './utils/conversion';
 import { parseFile, OcrProgress } from './utils/parser';
-import { downloadExcel, exportMultipleToExcel } from './utils/excelExport';
+import { downloadByContainer } from './utils/excelExport';
 import { WAREHOUSES, DEFAULT_WAREHOUSE } from './utils/constants';
 import { loadInventoryFromExcel, getInventoryCount, clearInventory } from './utils/inventoryLookup';
 
@@ -231,20 +231,10 @@ function App() {
   const handleExport = useCallback(() => {
     if (results.length === 0) return;
 
-    if (results.length === 1) {
-      downloadExcel(results[0], warehouse, weightType);
-    } else {
-      // Multiple results - combine into one file
-      const blob = exportMultipleToExcel(results, warehouse, weightType);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `PackingLists_converted.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    }
+    // Export each packing list, splitting by container
+    results.forEach((result) => {
+      downloadByContainer(result, warehouse, weightType);
+    });
   }, [results, warehouse, weightType]);
 
   const handleClear = useCallback(() => {
