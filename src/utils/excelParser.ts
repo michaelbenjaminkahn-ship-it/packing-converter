@@ -149,7 +149,7 @@ function findPackingListSheet(workbook: XLSX.WorkBook): { name: string; data: un
  * Looks for patterns like "ORDER NO.: 001772" or "EXCEL ORDER # 001726"
  */
 function extractPoFromExcel(data: unknown[][]): string {
-  // Search all rows for PO patterns (EXCEL ORDER # can appear in data rows for YC)
+  // Search all rows for PO patterns
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
@@ -157,60 +157,51 @@ function extractPoFromExcel(data: unknown[][]): string {
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
 
     // Pattern: "EXCEL ORDER # 001726" or "EXCEL ORDER #001726" (Yuen Chang format)
-    // This appears in data rows under each container section
-    const excelOrderMatch = rowText.match(/EXCEL\s*ORDER\s*#?\s*:?\s*0*(\d{4,6})/i);
+    const excelOrderMatch = rowText.match(/EXCEL\s*ORDER\s*#?\s*:?\s*0*(\d{3,6})/i);
     if (excelOrderMatch) {
       return excelOrderMatch[1];
     }
 
     // Pattern: "EXCEL METALS LLC ORDER NO.: 001837" (Wuu Jing format)
-    const excelMetalsMatch = rowText.match(/EXCEL\s*METALS.*ORDER\s*NO\.?\s*:?\s*0*(\d{4,6})/i);
+    const excelMetalsMatch = rowText.match(/EXCEL\s*METALS.*ORDER\s*NO\.?\s*:?\s*0*(\d{3,6})/i);
     if (excelMetalsMatch) {
       return excelMetalsMatch[1];
     }
 
-    // Pattern: "ORDER NO.: 001772" or "ORDER NO: 001772"
-    const orderNoMatch = rowText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*0*(\d{4,6})/i);
-    if (orderNoMatch) {
-      return orderNoMatch[1];
-    }
-
-    // Pattern: "PO# 1234" or "PO #1234"
-    const poMatch = rowText.match(/PO\s*#?\s*:?\s*(\d{4,6})/i);
-    if (poMatch) {
-      return poMatch[1];
-    }
-
-    // Excel stores number in separate cell - look for "ORDER NO" text followed by number in next cells
-    // Check if any cell contains "ORDER NO" pattern
-    let foundOrderNoCell = false;
-    for (let j = 0; j < row.length; j++) {
-      const cellText = String(row[j] ?? '');
-
-      // Check if this cell contains "ORDER NO" (with or without the number)
-      if (/ORDER\s*NO\.?\s*:?\s*$/i.test(cellText) || /ORDER\s*NO\.?\s*:?\s*#?\s*$/i.test(cellText)) {
-        foundOrderNoCell = true;
+    // Pattern: "ORDER NO.: 001772" or "ORDER NO: 001772" - but NOT "INVOICE NO"
+    if (rowText.toUpperCase().includes('ORDER') && !rowText.toUpperCase().includes('INVOICE NO')) {
+      const orderNoMatch = rowText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*0*(\d{3,6})/i);
+      if (orderNoMatch) {
+        return orderNoMatch[1];
       }
+    }
 
-      // If previous cells had "ORDER NO", look for a standalone number
-      if (foundOrderNoCell) {
-        // Check if this cell is a 4-6 digit number (might be stored as number type)
-        const numMatch = String(cellText).match(/^0*(\d{4,6})$/);
-        if (numMatch) {
-          // Remove leading zeros
-          return numMatch[1].replace(/^0+/, '') || numMatch[1];
+    // Check cell by cell - number might be in adjacent cell
+    for (let j = 0; j < row.length; j++) {
+      const cellText = String(row[j] ?? '').trim();
+      const cellUpper = cellText.toUpperCase();
+
+      // Check if this cell ends with ORDER NO pattern (number in next cell)
+      if (cellUpper.includes('ORDER') && (cellUpper.endsWith('NO.') || cellUpper.endsWith('NO.:') ||
+          cellUpper.endsWith('NO:') || cellUpper.endsWith('NO') || cellUpper.endsWith('#'))) {
+        // Look at next cells for the number
+        for (let k = j + 1; k < Math.min(j + 3, row.length); k++) {
+          const nextCell = row[k];
+          // Handle both string and number types
+          const nextValue = typeof nextCell === 'number' ? nextCell : String(nextCell ?? '');
+          const numStr = String(nextValue).replace(/^0+/, '');
+          if (/^\d{3,6}$/.test(numStr)) {
+            return numStr;
+          }
         }
       }
-    }
 
-    // Also check each cell individually for patterns like "001837" next to "ORDER NO"
-    for (let j = 0; j < row.length; j++) {
-      const cellText = String(row[j] ?? '');
-
-      // Check if this specific cell has the full pattern
-      const cellMatch = cellText.match(/ORDER\s*NO\.?\s*:?\s*0*(\d{4,6})/i);
-      if (cellMatch) {
-        return cellMatch[1];
+      // Check if cell has full pattern
+      if (cellUpper.includes('ORDER') && !cellUpper.includes('INVOICE')) {
+        const cellMatch = cellText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*0*(\d{3,6})/i);
+        if (cellMatch) {
+          return cellMatch[1];
+        }
       }
     }
   }
@@ -220,11 +211,14 @@ function extractPoFromExcel(data: unknown[][]): string {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
 
-    const rowText = row.map(cell => String(cell ?? '')).join(' ');
-    const bundleMatch = rowText.match(/(\d{6})-\d{2}/);
-    if (bundleMatch) {
-      // Remove leading zeros: 001772 -> 1772
-      return bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
+    for (const cell of row) {
+      const cellStr = String(cell ?? '');
+      // Match bundle pattern: 6 digits followed by dash and 2 digits
+      const bundleMatch = cellStr.match(/(\d{6})-\d{2}/);
+      if (bundleMatch) {
+        // Remove leading zeros: 001772 -> 1772
+        return bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
+      }
     }
   }
 
