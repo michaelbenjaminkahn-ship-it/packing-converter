@@ -10,6 +10,28 @@ import { loadInventoryFromExcel, getInventoryCount, clearInventory } from './uti
 
 type WeightType = 'actual' | 'theoretical';
 
+/**
+ * Determine default weight type based on finish
+ * #1 finish → theoretical (hot rolled, use calculated weight + skid)
+ * #4, 2B, #8, BA → actual (cold rolled, use actual weight from packing list)
+ */
+function getDefaultWeightTypeForItems(items: { inventoryId: string }[]): WeightType {
+  if (items.length === 0) return 'actual';
+
+  // Check the first item's finish
+  const firstInventoryId = items[0].inventoryId;
+  const match = firstInventoryId.match(/#1|#4|#8|2B|BA/i);
+  const finish = match ? match[0].toUpperCase() : null;
+
+  // #1 finish defaults to theoretical
+  if (finish === '#1') {
+    return 'theoretical';
+  }
+
+  // All other finishes (#4, 2B, #8, BA) default to actual
+  return 'actual';
+}
+
 interface OcrState {
   isRunning: boolean;
   fileId: string | null;
@@ -145,12 +167,19 @@ function App() {
           const matchingInvoice = currentInvoices.find(
             (inv) => inv.poNumber === parseResult.result!.poNumber
           );
-          if (matchingInvoice) {
-            const resultWithPrices = applyInvoicePrices(parseResult.result!, matchingInvoice);
-            setResults((prev) => [...prev, resultWithPrices]);
-          } else {
-            setResults((prev) => [...prev, parseResult.result!]);
-          }
+          const finalResult = matchingInvoice
+            ? applyInvoicePrices(parseResult.result!, matchingInvoice)
+            : parseResult.result!;
+
+          // Add result and set weight type based on finish
+          setResults((prev) => {
+            const newIndex = prev.length;
+            setWeightTypes((prevTypes) => ({
+              ...prevTypes,
+              [newIndex]: getDefaultWeightTypeForItems(finalResult.items),
+            }));
+            return [...prev, finalResult];
+          });
           return currentInvoices;
         });
       }
@@ -280,7 +309,19 @@ function App() {
       return result;
     });
 
-    setResults((prev) => [...prev, ...resultsWithPrices]);
+    // Add results and set weight types based on finish
+    setResults((prev) => {
+      const startIndex = prev.length;
+      // Set weight types for each new result based on finish
+      setWeightTypes((prevTypes) => {
+        const newTypes = { ...prevTypes };
+        resultsWithPrices.forEach((result, i) => {
+          newTypes[startIndex + i] = getDefaultWeightTypeForItems(result.items);
+        });
+        return newTypes;
+      });
+      return [...prev, ...resultsWithPrices];
+    });
     setIsProcessing(false);
 
     // Auto-process files needing OCR
