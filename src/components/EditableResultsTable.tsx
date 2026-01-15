@@ -1,6 +1,32 @@
 import { useState } from 'react';
 import { ParsedPackingList, PackingListItem } from '../types';
 
+// Steel density: 0.2833 lbs per cubic inch (for 304 stainless)
+const STEEL_DENSITY_LBS_PER_CUBIC_INCH = 0.2833;
+
+/**
+ * Calculate theoretical weight from dimensions
+ */
+function calculateTheoreticalWeight(item: PackingListItem): number {
+  // Parse dimensions from inventory ID: "0.188-60__-144__-304/304L-#1____"
+  const match = item.inventoryId.match(/^([\d.]+)-(\d+)__-(\d+)__-/);
+  if (!match) {
+    // Fallback to actual weight if can't parse
+    return item.grossWeightLbs;
+  }
+
+  const thickness = parseFloat(match[1]);
+  const width = parseFloat(match[2]);
+  const length = parseFloat(match[3]);
+
+  // Volume in cubic inches * density * piece count
+  const volumePerPiece = thickness * width * length;
+  const weightPerPiece = volumePerPiece * STEEL_DENSITY_LBS_PER_CUBIC_INCH;
+  const totalWeight = weightPerPiece * item.pieceCount;
+
+  return Math.round(totalWeight);
+}
+
 // Common Wuu Jing sizes for dropdown
 const COMMON_SIZES = [
   { label: '3/16" x 60" x 144"', value: '0.188-60__-144__-304/304L-#1___' },
@@ -335,14 +361,27 @@ export function EditableResultsTable({
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {result.items.map((item, index) => {
-              // Calculate OrderQty: sum of containerQtyLbs for all items with same inventoryId (SKU)
+              // Get weight based on weight type selection
+              const displayGrossWeight = weightType === 'theoretical'
+                ? calculateTheoreticalWeight(item)
+                : item.grossWeightLbs;
+              const displayContainerWeight = weightType === 'theoretical'
+                ? calculateTheoreticalWeight(item)
+                : item.containerQtyLbs;
+
+              // Calculate OrderQty: sum of weights for all items with same inventoryId (SKU)
               const calculatedOrderQty = result.items
                 .filter(i => i.inventoryId === item.inventoryId)
-                .reduce((sum, i) => sum + i.containerQtyLbs, 0);
+                .reduce((sum, i) => {
+                  const itemWeight = weightType === 'theoretical'
+                    ? calculateTheoreticalWeight(i)
+                    : i.containerQtyLbs;
+                  return sum + itemWeight;
+                }, 0);
               const orderQty = item.orderQtyOverride ?? calculatedOrderQty;
 
-              // Unit cost: blank by default - price data comes from invoice, not packing list
-              // User can manually enter via unitCostOverride
+              // Unit cost: use invoice price if available, otherwise blank
+              // unitCostOverride can be set from invoice parsing or manual entry
               const unitCost = item.unitCostOverride ?? '';
 
               // Warehouse: use item-level override or default
@@ -363,13 +402,13 @@ export function EditableResultsTable({
                     {renderEditableCell(index, 'pieceCount', item.pieceCount, true)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
-                    {renderEditableCell(index, 'grossWeightLbs', item.grossWeightLbs, true)}
+                    {renderEditableCell(index, 'grossWeightLbs', displayGrossWeight, true)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
                     {renderEditableCell(index, 'orderQtyOverride', orderQty, true)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
-                    {renderEditableCell(index, 'containerQtyLbs', item.containerQtyLbs, true)}
+                    {renderEditableCell(index, 'containerQtyLbs', displayContainerWeight, true)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
                     {renderEditableCell(index, 'unitCostOverride', unitCost, true)}
@@ -399,21 +438,32 @@ export function EditableResultsTable({
             })}
           </tbody>
           <tfoot className="bg-gray-50">
-            <tr>
-              <td colSpan={4} className="px-3 py-2 text-sm font-medium text-gray-700 text-right">
-                Total:
-              </td>
-              <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
-                {result.totalGrossWeightLbs.toLocaleString()}
-              </td>
-              <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
-                {result.totalNetWeightLbs.toLocaleString()}
-              </td>
-              <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
-                {result.totalNetWeightLbs.toLocaleString()}
-              </td>
-              <td colSpan={5}></td>
-            </tr>
+            {(() => {
+              // Calculate totals based on weight type
+              const totalGross = weightType === 'theoretical'
+                ? result.items.reduce((sum, item) => sum + calculateTheoreticalWeight(item), 0)
+                : result.totalGrossWeightLbs;
+              const totalNet = weightType === 'theoretical'
+                ? result.items.reduce((sum, item) => sum + calculateTheoreticalWeight(item), 0)
+                : result.totalNetWeightLbs;
+              return (
+                <tr>
+                  <td colSpan={4} className="px-3 py-2 text-sm font-medium text-gray-700 text-right">
+                    Total:
+                  </td>
+                  <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
+                    {totalGross.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
+                    {totalNet.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
+                    {totalNet.toLocaleString()}
+                  </td>
+                  <td colSpan={5}></td>
+                </tr>
+              );
+            })()}
           </tfoot>
         </table>
       </div>
