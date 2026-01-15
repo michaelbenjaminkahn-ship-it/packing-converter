@@ -194,6 +194,16 @@ function App() {
                 : f
             )
           );
+
+          // Pre-fill PO number from parsed result if not already set
+          if (!poNumber && parseResult.result.poNumber && parseResult.result.poNumber !== 'UNKNOWN') {
+            setPoNumber(parseResult.result.poNumber);
+          }
+
+          // Pre-fill warehouse from parsed result if detected
+          if (parseResult.result.warehouse && parseResult.result.warehouse !== 'LA') {
+            setWarehouse(parseResult.result.warehouse);
+          }
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -382,13 +392,16 @@ function App() {
                     className="block text-sm font-medium text-gray-700 mb-1"
                   >
                     PO Number
+                    {poNumber && (
+                      <span className="ml-2 text-xs text-green-600 font-normal">(auto-detected)</span>
+                    )}
                   </label>
                   <input
                     type="text"
                     id="poNumber"
                     value={poNumber}
                     onChange={(e) => setPoNumber(e.target.value)}
-                    placeholder="e.g., 1812"
+                    placeholder="Auto-detected from file"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"
                   />
                 </div>
