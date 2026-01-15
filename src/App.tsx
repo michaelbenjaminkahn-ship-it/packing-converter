@@ -346,26 +346,26 @@ function App() {
   const hasResults = results.length > 0;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       {/* OCR Progress Modal */}
       {ocrState.isRunning && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4 shadow-soft-lg">
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">
               Running OCR on Scanned PDF
             </h3>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-slate-600 mb-4 truncate">
               {ocrState.fileName}
             </p>
             <div className="mb-2">
-              <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-blue-600 transition-all duration-300"
+                  className="h-full bg-navy-700 rounded-full transition-all duration-300"
                   style={{ width: `${ocrState.progress}%` }}
                 />
               </div>
             </div>
-            <p className="text-xs text-gray-500">{ocrState.status}</p>
+            <p className="text-xs text-slate-500">{ocrState.status}</p>
             <p className="text-xs text-amber-600 mt-3">
               OCR may take 10-30 seconds per page. Please wait...
             </p>
@@ -374,18 +374,18 @@ function App() {
       )}
 
       {/* Header */}
-      <header className="bg-white shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 py-4">
+      <header className="bg-navy-900 shadow-lg">
+        <div className="max-w-6xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-semibold text-gray-900">
+              <h1 className="text-xl font-semibold text-white">
                 Packing List Converter
               </h1>
-              <p className="text-sm text-gray-500 mt-1">
+              <p className="text-sm text-navy-200 mt-0.5">
                 Convert steel supplier packing lists for Acumatica import
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <input
                 type="file"
                 ref={inventoryInputRef}
@@ -395,18 +395,18 @@ function App() {
               />
               <button
                 onClick={() => inventoryInputRef.current?.click()}
-                className="px-3 py-1.5 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-navy-800 text-navy-100 hover:bg-navy-700 border border-navy-700 transition-all duration-200"
               >
                 Upload Inventory List
               </button>
               {inventoryCount > 0 && (
                 <>
-                  <span className="text-xs text-green-600 font-medium">
+                  <span className="text-xs text-emerald-400 font-medium">
                     {inventoryCount} IDs loaded
                   </span>
                   <button
                     onClick={handleClearInventory}
-                    className="text-xs text-red-500 hover:text-red-700"
+                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
                   >
                     Clear
                   </button>
@@ -418,10 +418,10 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-5xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-6 py-8">
         {/* OCR Warnings */}
         {ocrWarnings.length > 0 && (
-          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <div className="mb-6 p-4 bg-amber-50 border border-amber-200/60 rounded-xl shadow-soft">
             <h4 className="text-sm font-medium text-amber-800 mb-2">
               OCR Accuracy Warnings
             </h4>
@@ -443,19 +443,11 @@ function App() {
 
           {/* Action Buttons */}
           {files.length > 0 && (
-            <div className="mt-4 flex gap-3">
+            <div className="mt-5 flex gap-3">
               <button
                 onClick={handleConvert}
                 disabled={!hasPendingFiles || isProcessing || ocrState.isRunning}
-                className={`
-                  px-4 py-2 rounded-lg font-medium text-sm
-                  ${
-                    hasPendingFiles && !isProcessing && !ocrState.isRunning
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                  }
-                  transition-colors flex items-center gap-2
-                `}
+                className="btn-primary flex items-center gap-2"
               >
                 {(isProcessing || ocrState.isRunning) && (
                   <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
@@ -479,7 +471,7 @@ function App() {
               <button
                 onClick={handleClear}
                 disabled={isProcessing || ocrState.isRunning}
-                className="px-4 py-2 rounded-lg font-medium text-sm border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                className="btn-secondary"
               >
                 Clear All
               </button>
@@ -489,19 +481,19 @@ function App() {
 
         {/* Invoices Loaded Indicator */}
         {invoices.length > 0 && (
-          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-            <div className="flex items-center gap-2 text-sm text-green-700">
+          <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200/60 rounded-xl shadow-soft">
+            <div className="flex items-center gap-2 text-sm text-emerald-700">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <span className="font-medium">
                 {invoices.length} invoice{invoices.length > 1 ? 's' : ''} loaded
               </span>
-              <span className="text-green-600">
+              <span className="text-emerald-600">
                 (PO# {invoices.map(i => i.poNumber).join(', ')})
               </span>
             </div>
-            <p className="text-xs text-green-600 mt-1">
+            <p className="text-xs text-emerald-600 mt-1">
               Unit costs will be automatically applied to matching packing lists.
             </p>
           </div>
@@ -510,13 +502,16 @@ function App() {
         {/* Results Section */}
         {hasResults && (
           <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-medium text-gray-900">
-                Conversion Results ({results.reduce((sum, r) => sum + r.items.length, 0)} items)
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-semibold text-slate-800">
+                Conversion Results
+                <span className="ml-2 text-sm font-normal text-slate-500">
+                  ({results.reduce((sum, r) => sum + r.items.length, 0)} items)
+                </span>
               </h2>
               <button
                 onClick={handleExport}
-                className="px-4 py-2 rounded-lg font-medium text-sm bg-green-600 text-white hover:bg-green-700 transition-colors flex items-center gap-2"
+                className="btn-success flex items-center gap-2"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -547,11 +542,11 @@ function App() {
 
         {/* Empty State */}
         {files.length === 0 && (
-          <div className="text-center py-12">
-            <p className="text-gray-500">
+          <div className="text-center py-16">
+            <p className="text-slate-500">
               Upload packing list files from Wuu Jing or Yuen Chang to get started.
             </p>
-            <p className="text-xs text-gray-400 mt-2">
+            <p className="text-xs text-slate-400 mt-2">
               Supports text-based PDFs and scanned PDFs (via OCR)
             </p>
           </div>
@@ -559,7 +554,7 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="mt-auto py-4 text-center text-sm text-gray-400">
+      <footer className="mt-auto py-6 text-center text-sm text-slate-400 border-t border-slate-200">
         <p>Supports Wuu Jing and Yuen Chang packing list formats</p>
       </footer>
     </div>
