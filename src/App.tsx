@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { FileDropzone, FileList, ResultsTable } from './components';
 import { UploadedFile, ParsedPackingList } from './types';
 import { generateId, extractPoNumber } from './utils/conversion';
 import { parseFile } from './utils/parser';
 import { downloadExcel, exportMultipleToExcel } from './utils/excelExport';
 import { WAREHOUSES, DEFAULT_WAREHOUSE } from './utils/constants';
+import { loadInventoryFromExcel, getInventoryCount, clearInventory } from './utils/inventoryLookup';
 
 type WeightType = 'actual' | 'theoretical';
 
@@ -15,6 +16,13 @@ function App() {
   const [warehouse, setWarehouse] = useState<string>(DEFAULT_WAREHOUSE);
   const [weightType, setWeightType] = useState<WeightType>('actual');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [inventoryCount, setInventoryCount] = useState(0);
+  const inventoryInputRef = useRef<HTMLInputElement>(null);
+
+  // Load inventory count on mount
+  useEffect(() => {
+    setInventoryCount(getInventoryCount());
+  }, []);
 
   const handleFilesSelected = useCallback((newFiles: File[]) => {
     const uploadedFiles: UploadedFile[] = newFiles.map((file) => {
@@ -125,6 +133,29 @@ function App() {
     setPoNumber('');
   }, []);
 
+  const handleInventoryUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const count = await loadInventoryFromExcel(file);
+      setInventoryCount(getInventoryCount());
+      alert(`Loaded ${count} inventory IDs. Total: ${getInventoryCount()}`);
+    } catch (error) {
+      alert('Failed to load inventory file. Make sure it has an "Inventory ID" column.');
+    }
+
+    // Reset input
+    if (inventoryInputRef.current) {
+      inventoryInputRef.current.value = '';
+    }
+  }, []);
+
+  const handleClearInventory = useCallback(() => {
+    clearInventory();
+    setInventoryCount(0);
+  }, []);
+
   const hasPendingFiles = files.some((f) => f.status === 'pending');
   const hasResults = results.length > 0;
 
@@ -133,12 +164,44 @@ function App() {
       {/* Header */}
       <header className="bg-white shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-4">
-          <h1 className="text-xl font-semibold text-gray-900">
-            Packing List Converter
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Convert steel supplier packing lists for Acumatica import
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-semibold text-gray-900">
+                Packing List Converter
+              </h1>
+              <p className="text-sm text-gray-500 mt-1">
+                Convert steel supplier packing lists for Acumatica import
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="file"
+                ref={inventoryInputRef}
+                onChange={handleInventoryUpload}
+                accept=".xlsx,.xls"
+                className="hidden"
+              />
+              <button
+                onClick={() => inventoryInputRef.current?.click()}
+                className="px-3 py-1.5 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Upload Inventory List
+              </button>
+              {inventoryCount > 0 && (
+                <>
+                  <span className="text-xs text-green-600 font-medium">
+                    {inventoryCount} IDs loaded
+                  </span>
+                  <button
+                    onClick={handleClearInventory}
+                    className="text-xs text-red-500 hover:text-red-700"
+                  >
+                    Clear
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </header>
 
