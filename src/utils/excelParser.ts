@@ -5,6 +5,16 @@ import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehou
 import { VENDOR_CODES } from './constants';
 
 /**
+ * Invoice price data from WJ INVOICE tab
+ */
+interface InvoicePriceData {
+  size: string;           // Size string (e.g., "3/16"*48"*96")
+  pricePerPiece: number;  // USD per piece
+  weightPerPieceLbs: number; // Weight per piece in lbs
+  pricePerLb: number;     // Calculated: pricePerPiece / weightPerPieceLbs
+}
+
+/**
  * Parse an Excel file and extract packing list data
  */
 export async function parseExcel(file: File, poNumber: string): Promise<ParsedPackingList> {
@@ -25,6 +35,15 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
       extractedWarehouse = extractWarehouseFromExcel(data);
     }
     if (extractedPo && extractedWarehouse) break;
+  }
+
+  // Try to parse INVOICE sheet for price data (Wuu Jing only)
+  let invoicePrices: Map<string, InvoicePriceData> = new Map();
+  const invoiceSheet = workbook.SheetNames.find(name => name.toLowerCase() === 'invoice');
+  if (invoiceSheet) {
+    const sheet = workbook.Sheets[invoiceSheet];
+    const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
+    invoicePrices = parseWuuJingInvoice(data);
   }
 
   // Find the sheet most likely to be a packing list
@@ -74,6 +93,17 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
 
   if (items.length === 0) {
     throw new Error('Could not parse any items from packing list');
+  }
+
+  // Apply invoice prices to items (Wuu Jing only)
+  if (detectedSupplier === 'wuu-jing' && invoicePrices.size > 0) {
+    items.forEach(item => {
+      // Try to find matching price by rawSize
+      const priceData = findMatchingPrice(item.rawSize, invoicePrices);
+      if (priceData) {
+        item.unitCostOverride = priceData.pricePerLb;
+      }
+    });
   }
 
   // Calculate totals
@@ -544,4 +574,107 @@ function parseExcelWithoutHeaders(
   }
 
   return items;
+}
+
+/**
+ * Parse Wuu Jing INVOICE sheet for price data
+ * Columns: NO, SIZE, PC, NET WEIGHT MT, PRICE US$/PC, PRICE US$/MT, AMOUNT USD$
+ */
+function parseWuuJingInvoice(data: unknown[][]): Map<string, InvoicePriceData> {
+  const prices = new Map<string, InvoicePriceData>();
+
+  // Find header row
+  const headerRowIndex = findHeaderRow(data, ['size', 'price', 'pc']);
+  if (headerRowIndex === -1) return prices;
+
+  const headerRow = data[headerRowIndex] || [];
+  const headers = headerRow.map(h => String(h ?? '').toLowerCase().trim());
+
+  // Map column indices
+  const colMap = {
+    size: findColumnIndex(headers, ['size']),
+    pc: findColumnIndex(headers, ['pc', 'pcs']),
+    netWeight: findColumnIndex(headers, ['net weight', 'net']),
+    pricePerPc: findColumnIndex(headers, ['price us$/pc', 'price', 'us$/pc']),
+  };
+
+  // Parse data rows
+  for (let i = headerRowIndex + 1; i < data.length; i++) {
+    const row = data[i];
+    if (!row || !Array.isArray(row) || row.length === 0) continue;
+
+    // Skip total rows
+    const firstCell = String(row[0] ?? '').toLowerCase();
+    if (firstCell.includes('total')) continue;
+
+    // Get size string - format: "4.76*1220MM*2440MM(3/16"*48"*96")"
+    const sizeStr = colMap.size >= 0 ? String(row[colMap.size] || '') : '';
+    if (!sizeStr || !sizeStr.includes('*')) continue;
+
+    // Extract the size in parentheses (e.g., "3/16"*48"*96")
+    const sizeMatch = sizeStr.match(/\(([^)]+)\)/);
+    const normalizedSize = sizeMatch ? sizeMatch[1] : sizeStr;
+
+    const pc = colMap.pc >= 0 ? parseInt(String(row[colMap.pc]), 10) : 0;
+    const netWeightMT = colMap.netWeight >= 0 ? parseFloat(String(row[colMap.netWeight])) : 0;
+    const pricePerPc = colMap.pricePerPc >= 0 ? parseFloat(String(row[colMap.pricePerPc])) : 0;
+
+    if (pc <= 0 || pricePerPc <= 0 || netWeightMT <= 0) continue;
+
+    // Calculate weight per piece in lbs (MT * 2204.62 / pieces)
+    const totalWeightLbs = mtToLbs(netWeightMT);
+    const weightPerPieceLbs = totalWeightLbs / pc;
+
+    // Calculate price per lb
+    const pricePerLb = pricePerPc / weightPerPieceLbs;
+
+    prices.set(normalizedSize, {
+      size: normalizedSize,
+      pricePerPiece: pricePerPc,
+      weightPerPieceLbs,
+      pricePerLb: Math.round(pricePerLb * 100) / 100, // Round to 2 decimal places
+    });
+  }
+
+  return prices;
+}
+
+/**
+ * Find matching price data for a packing list item
+ * Tries to match by normalizing size strings
+ */
+function findMatchingPrice(rawSize: string, prices: Map<string, InvoicePriceData>): InvoicePriceData | null {
+  // Direct match
+  if (prices.has(rawSize)) {
+    return prices.get(rawSize)!;
+  }
+
+  // Normalize the raw size for comparison
+  // rawSize from packing: "4.76*1220MM*3050MM(3/16"*48"*120")"
+  const sizeMatch = rawSize.match(/\(([^)]+)\)/);
+  const normalizedRawSize = sizeMatch ? sizeMatch[1] : rawSize;
+
+  if (prices.has(normalizedRawSize)) {
+    return prices.get(normalizedRawSize)!;
+  }
+
+  // Try fuzzy matching by extracting dimensions
+  // Format: thickness"*width"*length" (e.g., "3/16"*48"*120")
+  const dimMatch = normalizedRawSize.match(/(\d+\/\d+|\d+(?:\.\d+)?)[""']\s*\*\s*(\d+)[""']\s*\*\s*(\d+)/);
+  if (dimMatch) {
+    const [, thickness, width, length] = dimMatch;
+
+    // Try to find a matching key in prices
+    for (const [key, value] of prices.entries()) {
+      const keyMatch = key.match(/(\d+\/\d+|\d+(?:\.\d+)?)[""']\s*\*\s*(\d+)[""']\s*\*\s*(\d+)/);
+      if (keyMatch) {
+        const [, keyThickness, keyWidth, keyLength] = keyMatch;
+        if (thickness === keyThickness && width === keyWidth && length === keyLength) {
+          return value;
+        }
+      }
+    }
+  }
+
+  return null;
 }
