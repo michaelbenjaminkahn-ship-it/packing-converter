@@ -149,7 +149,23 @@ function findPackingListSheet(workbook: XLSX.WorkBook): { name: string; data: un
  * Looks for patterns like "ORDER NO.: 001772" or "EXCEL ORDER # 001726"
  */
 function extractPoFromExcel(data: unknown[][]): string {
-  // Search all rows for PO patterns
+  // FIRST: Try to extract from bundle numbers - most reliable for WJ (e.g., 001772-01 -> PO 1772)
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    if (!row || !Array.isArray(row)) continue;
+
+    for (const cell of row) {
+      const cellStr = String(cell ?? '');
+      // Match bundle pattern: 6 digits followed by dash and 2 digits
+      const bundleMatch = cellStr.match(/(\d{6})-\d{2}/);
+      if (bundleMatch) {
+        // Remove leading zeros: 001772 -> 1772
+        return bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
+      }
+    }
+  }
+
+  // Search all rows for explicit ORDER patterns
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
@@ -202,22 +218,6 @@ function extractPoFromExcel(data: unknown[][]): string {
         if (cellMatch) {
           return cellMatch[1];
         }
-      }
-    }
-  }
-
-  // Fallback: try to extract from bundle numbers (e.g., 001772-01 -> PO 1772)
-  for (let i = 0; i < data.length; i++) {
-    const row = data[i];
-    if (!row || !Array.isArray(row)) continue;
-
-    for (const cell of row) {
-      const cellStr = String(cell ?? '');
-      // Match bundle pattern: 6 digits followed by dash and 2 digits
-      const bundleMatch = cellStr.match(/(\d{6})-\d{2}/);
-      if (bundleMatch) {
-        // Remove leading zeros: 001772 -> 1772
-        return bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
       }
     }
   }
