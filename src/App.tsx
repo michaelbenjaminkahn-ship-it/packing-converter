@@ -23,7 +23,8 @@ function App() {
   const [results, setResults] = useState<ParsedPackingList[]>([]);
   const [poNumber, setPoNumber] = useState('');
   const [warehouse, setWarehouse] = useState<string>(DEFAULT_WAREHOUSE);
-  const [weightType, setWeightType] = useState<WeightType>('actual');
+  const [defaultWeightType, setDefaultWeightType] = useState<WeightType>('actual');
+  const [weightTypes, setWeightTypes] = useState<Record<number, WeightType>>({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [inventoryCount, setInventoryCount] = useState(0);
   const [ocrState, setOcrState] = useState<OcrState>({
@@ -235,16 +236,18 @@ function App() {
     // Stagger downloads to prevent browser from blocking multiple rapid downloads
     results.forEach((result, index) => {
       setTimeout(() => {
-        downloadByContainer(result, warehouse, weightType);
+        const resultWeightType = weightTypes[index] || defaultWeightType;
+        downloadByContainer(result, warehouse, resultWeightType);
       }, index * 500); // 500ms delay between each download
     });
-  }, [results, warehouse, weightType]);
+  }, [results, warehouse, weightTypes, defaultWeightType]);
 
   const handleClear = useCallback(() => {
     setFiles([]);
     setResults([]);
     setPoNumber('');
     setOcrWarnings([]);
+    setWeightTypes({});
     setWarehouseAutoDetected(false);
   }, []);
 
@@ -431,9 +434,9 @@ function App() {
                   <div className="flex rounded-md shadow-sm">
                     <button
                       type="button"
-                      onClick={() => setWeightType('actual')}
+                      onClick={() => setDefaultWeightType('actual')}
                       className={`flex-1 px-3 py-2 text-sm font-medium rounded-l-md border ${
-                        weightType === 'actual'
+                        defaultWeightType === 'actual'
                           ? 'bg-blue-600 text-white border-blue-600'
                           : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                       }`}
@@ -442,9 +445,9 @@ function App() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setWeightType('theoretical')}
+                      onClick={() => setDefaultWeightType('theoretical')}
                       className={`flex-1 px-3 py-2 text-sm font-medium rounded-r-md border-t border-r border-b ${
-                        weightType === 'theoretical'
+                        defaultWeightType === 'theoretical'
                           ? 'bg-blue-600 text-white border-blue-600'
                           : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                       }`}
@@ -532,6 +535,8 @@ function App() {
                   key={index}
                   result={result}
                   warehouse={warehouse}
+                  weightType={weightTypes[index] || defaultWeightType}
+                  onWeightTypeChange={(wt) => setWeightTypes(prev => ({ ...prev, [index]: wt }))}
                   onUpdate={(updatedResult) => handleResultUpdate(index, updatedResult)}
                 />
               ))}

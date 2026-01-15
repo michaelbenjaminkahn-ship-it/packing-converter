@@ -17,15 +17,21 @@ const COMMON_SIZES = [
   { label: '1/2" x 60" x 120"', value: '0.500-60__-120__-304/304L-#1___' },
 ];
 
+type WeightType = 'actual' | 'theoretical';
+
 interface EditableResultsTableProps {
   result: ParsedPackingList;
   warehouse?: string;
+  weightType?: WeightType;
+  onWeightTypeChange?: (weightType: WeightType) => void;
   onUpdate: (updatedResult: ParsedPackingList) => void;
 }
 
 export function EditableResultsTable({
   result,
   warehouse = 'LA',
+  weightType = 'actual',
+  onWeightTypeChange,
   onUpdate
 }: EditableResultsTableProps) {
   const [editingCell, setEditingCell] = useState<{ row: number; field: string } | null>(null);
@@ -209,7 +215,7 @@ export function EditableResultsTable({
       {/* Header Info */}
       <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
         <div className="flex flex-wrap gap-4 text-sm items-center justify-between">
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-wrap gap-4 items-center">
             <div>
               <span className="text-gray-500">Supplier:</span>{' '}
               <span className="font-medium">{supplierNames[result.supplier]}</span>
@@ -228,6 +234,35 @@ export function EditableResultsTable({
               <span className="text-gray-500">Items:</span>{' '}
               <span className="font-medium">{result.items.length}</span>
             </div>
+            {onWeightTypeChange && (
+              <div className="flex items-center gap-2 ml-2 pl-2 border-l border-gray-300">
+                <span className="text-gray-500">Weight:</span>
+                <div className="flex rounded-md shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => onWeightTypeChange('actual')}
+                    className={`px-2 py-1 text-xs font-medium rounded-l-md border ${
+                      weightType === 'actual'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Actual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onWeightTypeChange('theoretical')}
+                    className={`px-2 py-1 text-xs font-medium rounded-r-md border-t border-r border-b ${
+                      weightType === 'theoretical'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Theoretical
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <button
             onClick={addRow}
