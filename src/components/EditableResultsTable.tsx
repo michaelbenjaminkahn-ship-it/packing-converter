@@ -5,7 +5,38 @@ import { ParsedPackingList, PackingListItem } from '../types';
 const STEEL_DENSITY_LBS_PER_CUBIC_INCH = 0.2833;
 
 /**
+ * Detect finish type from inventory ID
+ * Returns: '#1', '#4', '2B', '#8', 'BA', or null if not detected
+ */
+function getFinishFromInventoryId(inventoryId: string): string | null {
+  // Match finish patterns like #1, #4, #8, 2B, BA
+  const match = inventoryId.match(/#1|#4|#8|2B|BA/i);
+  return match ? match[0].toUpperCase() : null;
+}
+
+/**
+ * Check if finish is #1 (hot rolled)
+ */
+function isHotRolledFinish(inventoryId: string): boolean {
+  const finish = getFinishFromInventoryId(inventoryId);
+  return finish === '#1';
+}
+
+/**
+ * Get skid weight based on length for #1 finish items
+ * 96" or 120" → 40 lbs
+ * > 120" → 55 lbs
+ */
+function getSkidWeight(lengthInches: number): number {
+  if (lengthInches <= 120) {
+    return 40;
+  }
+  return 55;
+}
+
+/**
  * Calculate theoretical weight from dimensions
+ * For #1 finish items, adds skid weight based on length
  */
 function calculateTheoreticalWeight(item: PackingListItem): number {
   // Parse dimensions from inventory ID: "0.188-60__-144__-304/304L-#1____"
@@ -22,7 +53,13 @@ function calculateTheoreticalWeight(item: PackingListItem): number {
   // Volume in cubic inches * density * piece count
   const volumePerPiece = thickness * width * length;
   const weightPerPiece = volumePerPiece * STEEL_DENSITY_LBS_PER_CUBIC_INCH;
-  const totalWeight = weightPerPiece * item.pieceCount;
+  const steelWeight = weightPerPiece * item.pieceCount;
+
+  // Add skid weight for #1 finish items
+  let totalWeight = steelWeight;
+  if (isHotRolledFinish(item.inventoryId)) {
+    totalWeight += getSkidWeight(length);
+  }
 
   return Math.round(totalWeight);
 }
