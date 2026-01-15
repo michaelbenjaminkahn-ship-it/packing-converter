@@ -1,5 +1,5 @@
-import { ParsedPackingList } from '../types';
-import { parsePdf, parsePdfWithOcr, needsOcr, OcrProgress } from './pdfParser';
+import { ParsedPackingList, ParsedInvoice } from '../types';
+import { parsePdf, parsePdfWithOcr, needsOcr, OcrProgress, parseInvoicePdf, parseInvoicePdfWithOcr, applyInvoicePrices, extractPdfText, isInvoicePage } from './pdfParser';
 import { parseExcel } from './excelParser';
 import { extractPoNumber } from './conversion';
 
@@ -11,10 +11,12 @@ export interface ParseOptions {
 
 export interface ParseResult {
   result?: ParsedPackingList;
+  invoice?: ParsedInvoice;
   error?: string;
   needsOcr?: boolean;
   ocrConfidence?: number;
   ocrWarning?: string;
+  isInvoice?: boolean;
 }
 
 /**
@@ -32,6 +34,33 @@ export async function parseFile(
 
   try {
     if (extension === 'pdf') {
+      // First, check if this PDF is an invoice (not a packing list)
+      let pages: string[];
+      try {
+        pages = await extractPdfText(file);
+      } catch {
+        pages = [];
+      }
+
+      const hasText = pages.some(p => p.trim().length > 50);
+      const looksLikeInvoice = pages.some(p => isInvoicePage(p));
+
+      if (looksLikeInvoice) {
+        // This is an invoice - parse it as such
+        if (useOcr || !hasText) {
+          const invoice = await parseInvoicePdfWithOcr(file, onOcrProgress);
+          if (invoice) {
+            return { invoice, isInvoice: true };
+          }
+        } else {
+          const invoice = await parseInvoicePdf(file);
+          if (invoice) {
+            return { invoice, isInvoice: true };
+          }
+        }
+        // If invoice parsing failed, fall through to try as packing list
+      }
+
       if (useOcr) {
         // Use OCR directly
         const result = await parsePdfWithOcr(file, po, onOcrProgress);
@@ -87,5 +116,6 @@ export async function parseFiles(
   return results;
 }
 
-// Re-export types
+// Re-export types and functions
 export type { OcrProgress };
+export { applyInvoicePrices };

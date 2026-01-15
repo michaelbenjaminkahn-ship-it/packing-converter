@@ -73,3 +73,25 @@ export interface ParsedSize {
   length: number;
   thicknessFormatted: string;
 }
+
+/**
+ * Invoice line item with price data
+ */
+export interface InvoiceLineItem {
+  size: string;           // Size string (e.g., "3/16" x 48" x 120"")
+  pcs: number;            // Piece count
+  qtyLbs: number;         // Weight in lbs
+  pricePerPiece: number;  // USD per piece
+  pricePerLb: number;     // Calculated: pricePerPiece / (qtyLbs / pcs)
+}
+
+/**
+ * Parsed invoice data
+ */
+export interface ParsedInvoice {
+  supplier: Supplier;
+  poNumber: string;       // EXCEL ORDER # for matching
+  invoiceNumber: string;  // Invoice reference number
+  items: InvoiceLineItem[];
+  totalValue: number;
+}
