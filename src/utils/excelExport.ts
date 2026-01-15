@@ -52,8 +52,7 @@ function getWeight(item: PackingListItem, weightType: WeightType): { gross: numb
 export function toAcumaticaRows(
   packingList: ParsedPackingList,
   warehouse: string = DEFAULT_WAREHOUSE,
-  weightType: WeightType = 'actual',
-  lineNumberStart: number = 1
+  weightType: WeightType = 'actual'
 ): AcumaticaRow[] {
   // Pre-calculate OrderQty per SKU (sum of container quantities for items with same inventoryId)
   const orderQtyBySku: Record<string, number> = {};
@@ -65,7 +64,7 @@ export function toAcumaticaRows(
     orderQtyBySku[item.inventoryId] += weights.net;
   });
 
-  return packingList.items.map((item, index) => {
+  return packingList.items.map((item) => {
     const weights = getWeight(item, weightType);
     // Unit cost: blank by default - price data comes from invoice, not packing list
     // User can manually enter via unitCostOverride
@@ -76,6 +75,9 @@ export function toAcumaticaRows(
 
     // Warehouse: use item-level override if set
     const itemWarehouse = item.warehouse || warehouse;
+
+    // Order Line Nbr: use override if set, otherwise blank (0)
+    const orderLineNbr = item.orderLineNbrOverride ?? 0;
 
     return {
       orderNumber: packingList.poNumber,
@@ -90,7 +92,7 @@ export function toAcumaticaRows(
       unitCost,
       warehouse: itemWarehouse,
       uom: 'LB',
-      orderLineNbr: lineNumberStart + index,
+      orderLineNbr,
     };
   });
 }
