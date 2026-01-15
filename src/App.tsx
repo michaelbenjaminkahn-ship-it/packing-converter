@@ -343,6 +343,13 @@ function App() {
     });
   }, [results, warehouse, weightTypes, defaultWeightType]);
 
+  const handleExportSingle = useCallback((index: number) => {
+    const result = results[index];
+    if (!result) return;
+    const resultWeightType = weightTypes[index] || defaultWeightType;
+    downloadByContainer(result, warehouse, resultWeightType);
+  }, [results, warehouse, weightTypes, defaultWeightType]);
+
   const handleClear = useCallback(() => {
     setFiles([]);
     setResults([]);
@@ -562,7 +569,7 @@ function App() {
                     d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
                   />
                 </svg>
-                Export to Excel
+                Export All to Excel
               </button>
             </div>
 
@@ -575,6 +582,7 @@ function App() {
                   weightType={weightTypes[index] || defaultWeightType}
                   onWeightTypeChange={(wt) => setWeightTypes(prev => ({ ...prev, [index]: wt }))}
                   onUpdate={(updatedResult) => handleResultUpdate(index, updatedResult)}
+                  onExport={() => handleExportSingle(index)}
                 />
               ))}
             </div>
