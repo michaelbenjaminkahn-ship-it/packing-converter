@@ -291,9 +291,14 @@ export function EditableResultsTable({
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {result.items.map((item, index) => {
-              // Calculate unit cost: (grossWeight / pieceCount) * 100 / 10000
+              // Calculate OrderQty: sum of containerQtyLbs for all items with same inventoryId (SKU)
+              const orderQty = result.items
+                .filter(i => i.inventoryId === item.inventoryId)
+                .reduce((sum, i) => sum + i.containerQtyLbs, 0);
+
+              // Unit cost: containerQtyLbs / pieceCount (weight per piece)
               const unitCost = item.pieceCount > 0
-                ? Math.round((item.grossWeightLbs / item.pieceCount) * 100) / 10000
+                ? Math.round((item.containerQtyLbs / item.pieceCount) * 100) / 100
                 : 0;
 
               return (
@@ -314,13 +319,13 @@ export function EditableResultsTable({
                     {renderEditableCell(index, 'grossWeightLbs', item.grossWeightLbs, true)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
-                    {item.containerQtyLbs.toLocaleString()}
+                    {orderQty.toLocaleString()}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
-                    {item.containerQtyLbs.toLocaleString()}
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                    {renderEditableCell(index, 'containerQtyLbs', item.containerQtyLbs, true)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 text-right font-mono">
-                    {unitCost.toFixed(4)}
+                    {unitCost.toFixed(2)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
                     {renderEditableCell(index, 'heatNumber', item.heatNumber || '')}

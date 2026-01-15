@@ -55,8 +55,23 @@ export function toAcumaticaRows(
   weightType: WeightType = 'actual',
   lineNumberStart: number = 1
 ): AcumaticaRow[] {
+  // Pre-calculate OrderQty per SKU (sum of container quantities for items with same inventoryId)
+  const orderQtyBySku: Record<string, number> = {};
+  packingList.items.forEach((item) => {
+    const weights = getWeight(item, weightType);
+    if (!orderQtyBySku[item.inventoryId]) {
+      orderQtyBySku[item.inventoryId] = 0;
+    }
+    orderQtyBySku[item.inventoryId] += weights.net;
+  });
+
   return packingList.items.map((item, index) => {
     const weights = getWeight(item, weightType);
+    // Unit cost: net weight / piece count (weight per piece)
+    const unitCost = item.pieceCount > 0
+      ? Math.round((weights.net / item.pieceCount) * 100) / 100
+      : 0;
+
     return {
       orderNumber: packingList.poNumber,
       vendor: packingList.vendorCode,
@@ -65,9 +80,9 @@ export function toAcumaticaRows(
       pieceCount: item.pieceCount,
       heatNumber: item.heatNumber,
       grossWeight: weights.gross,
-      orderQty: weights.net, // Net weight as OrderQty
-      container: weights.net, // Net weight as Container
-      unitCost: Math.round((weights.gross / item.pieceCount) * 100) / 10000, // Unit cost per piece
+      orderQty: orderQtyBySku[item.inventoryId], // Sum of container qty for this SKU
+      container: weights.net, // Individual line container qty
+      unitCost,
       warehouse,
       uom: 'LB',
       orderLineNbr: lineNumberStart + index,
