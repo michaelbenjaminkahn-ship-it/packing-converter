@@ -95,12 +95,16 @@ function StatusBadge({ status, error }: { status: UploadedFile['status']; error?
       </span>
     ),
     error: (
-      <span
-        className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-600"
-        title={error}
-      >
-        Error
-      </span>
+      <div className="flex flex-col">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-600">
+          Error
+        </span>
+        {error && (
+          <span className="text-xs text-red-500 mt-1 max-w-md truncate" title={error}>
+            {error}
+          </span>
+        )}
+      </div>
     ),
   };
 

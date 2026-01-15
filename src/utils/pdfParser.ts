@@ -213,7 +213,16 @@ function parseGenericText(
  */
 export async function parsePdf(file: File, poNumber: string): Promise<ParsedPackingList> {
   // Extract text from all pages
-  const pages = await extractPdfText(file);
+  let pages: string[];
+  try {
+    pages = await extractPdfText(file);
+  } catch (err) {
+    throw new Error(`Failed to read PDF: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+
+  if (pages.length === 0 || pages.every(p => !p.trim())) {
+    throw new Error('PDF appears to be empty or contains only images (no text could be extracted)');
+  }
 
   // Find the packing list page
   const packingListPage = findPackingListPage(pages);
@@ -229,7 +238,9 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
   const items = parsePackingListFromText(packingListPage.text, supplier, poNumber);
 
   if (items.length === 0) {
-    throw new Error('Could not parse any items from packing list');
+    // Provide more context about what was found
+    const preview = packingListPage.text.substring(0, 200).replace(/\s+/g, ' ');
+    throw new Error(`Could not parse items. Supplier: ${supplier}. Preview: "${preview}..."`);
   }
 
   // Calculate totals
