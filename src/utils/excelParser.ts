@@ -11,6 +11,22 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   const arrayBuffer = await file.arrayBuffer();
   const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
+  // Search ALL sheets for PO number and warehouse (they might be on invoice sheet)
+  let extractedPo = '';
+  let extractedWarehouse = '';
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
+
+    if (!extractedPo) {
+      extractedPo = extractPoFromExcel(data);
+    }
+    if (!extractedWarehouse) {
+      extractedWarehouse = extractWarehouseFromExcel(data);
+    }
+    if (extractedPo && extractedWarehouse) break;
+  }
+
   // Find the sheet most likely to be a packing list
   const bestSheet = findPackingListSheet(workbook);
 
@@ -24,12 +40,12 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   // Detect supplier from sheet content
   const supplier = detectSupplier(sheetText);
 
-  // Extract PO number from sheet if not provided
-  const extractedPo = extractPoFromExcel(bestSheet.data);
+  // Use provided PO, or extracted from any sheet
   const finalPoNumber = poNumber || extractedPo || 'UNKNOWN';
 
-  // Extract warehouse/destination from sheet
-  const warehouse = extractWarehouseFromExcel(bestSheet.data);
+  // Use warehouse from best sheet, or from any sheet if not found
+  const sheetWarehouse = extractWarehouseFromExcel(bestSheet.data);
+  const warehouse = sheetWarehouse !== 'LA' ? sheetWarehouse : (extractedWarehouse || 'LA');
 
   // Parse the data based on supplier
   let items: PackingListItem[];
