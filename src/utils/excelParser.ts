@@ -32,9 +32,28 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   const warehouse = extractWarehouseFromExcel(bestSheet.data);
 
   // Parse the data based on supplier
-  const items = supplier === 'yuen-chang'
-    ? parseYuenChangExcel(bestSheet.data, finalPoNumber)
-    : parseWuuJingExcel(bestSheet.data, finalPoNumber);
+  let items: PackingListItem[];
+  let detectedSupplier = supplier;
+
+  if (supplier === 'yuen-chang') {
+    items = parseYuenChangExcel(bestSheet.data, finalPoNumber);
+  } else if (supplier === 'wuu-jing') {
+    items = parseWuuJingExcel(bestSheet.data, finalPoNumber);
+  } else {
+    // Unknown supplier - try both parsers and use whichever gets more items
+    const wuuJingItems = parseWuuJingExcel(bestSheet.data, finalPoNumber);
+    const yuenChangItems = parseYuenChangExcel(bestSheet.data, finalPoNumber);
+
+    if (yuenChangItems.length >= wuuJingItems.length && yuenChangItems.length > 0) {
+      items = yuenChangItems;
+      detectedSupplier = 'yuen-chang';
+    } else if (wuuJingItems.length > 0) {
+      items = wuuJingItems;
+      detectedSupplier = 'wuu-jing';
+    } else {
+      items = [];
+    }
+  }
 
   if (items.length === 0) {
     throw new Error('Could not parse any items from packing list');
@@ -45,8 +64,8 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   const totalNetWeightLbs = items.reduce((sum, item) => sum + item.containerQtyLbs, 0);
 
   return {
-    supplier,
-    vendorCode: VENDOR_CODES[supplier] || '',
+    supplier: detectedSupplier,
+    vendorCode: VENDOR_CODES[detectedSupplier] || '',
     poNumber: finalPoNumber,
     items,
     totalGrossWeightLbs,

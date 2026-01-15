@@ -108,7 +108,9 @@ export function detectSupplier(text: string): Supplier {
   }
 
   // Yuen Chang uses gauge (GA) and "ITEM"
-  if (lowerText.includes('ga*') || lowerText.includes('ga(')) {
+  // Check for GA followed by any separator (*, (, x, space)
+  if (lowerText.includes('ga*') || lowerText.includes('ga(') ||
+      lowerText.includes('ga x') || /\d+ga\s+x?\s*\d+/.test(lowerText)) {
     return 'yuen-chang';
   }
 
