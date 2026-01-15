@@ -97,6 +97,12 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
 function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
 
+  // Try OCR-optimized parsing first
+  const ocrItems = parseWuuJingOcr(text, poNumber);
+  if (ocrItems.length > 0) {
+    return ocrItems;
+  }
+
   // Split text into chunks around size patterns
   const chunks = text.split(/(?=\d+\.?\d*\*\d+MM\*\d+MM\([^)]+\))/);
 
@@ -137,6 +143,126 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
   }
 
   return items;
+}
+
+/**
+ * OCR-optimized Wuu Jing parsing - handles imperfect text
+ * Looks for: size patterns, bundle numbers (001812-XX), and weights (X.XXX MT)
+ */
+function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
+  // Clean OCR artifacts - common misreads
+  const cleanText = text
+    .replace(/[oO](?=\d)/g, '0') // O before digit -> 0
+    .replace(/(?<=\d)[lI]/g, '1') // l or I after digit -> 1
+    .replace(/\s+/g, ' '); // normalize whitespace
+
+  // Find all size patterns - more flexible matching for OCR
+  // Pattern: thickness*widthMM*lengthMM(imperial)
+  const sizePatterns = [
+    // Standard format: 4.76*1525MM*3660MM(3/16"*60"*144")
+    /(\d+\.?\d*)\s*[*×xX]\s*(\d+)\s*MM\s*[*×xX]\s*(\d+)\s*MM\s*\(([^)]+)\)/gi,
+    // Without MM labels: 4.76*1525*3660(3/16"*60"*144")
+    /(\d+\.?\d*)\s*[*×xX]\s*(\d{3,4})\s*[*×xX]\s*(\d{3,4})\s*\(([^)]+)\)/gi,
+  ];
+
+  // Find bundle number pattern: 001812-01, 001812-02, etc.
+  const bundlePattern = /00?(\d{4})-(\d{2})/g;
+  const bundleMatches = [...cleanText.matchAll(bundlePattern)];
+
+  // Find weight patterns: decimal numbers like 1.680, 1.693 (between 0.5 and 10)
+  const weightPattern = /(\d+\.\d{2,3})/g;
+  const weightMatches = [...cleanText.matchAll(weightPattern)]
+    .map(m => ({ value: parseFloat(m[1]), index: m.index! }))
+    .filter(w => w.value >= 0.5 && w.value <= 50); // Reasonable MT weights
+
+  // Find piece count patterns: small integers (1-20) that appear alone
+  // Look for pattern like: size) 8 001812 or size) 10 001812
+  const pcPattern = /\)\s*(\d{1,2})\s+00/g;
+  const pcMatches = [...cleanText.matchAll(pcPattern)];
+
+  let lineNum = 0;
+  for (const sizePattern of sizePatterns) {
+    const sizeMatches = [...cleanText.matchAll(sizePattern)];
+
+    for (const match of sizeMatches) {
+      const fullMatch = match[0];
+      const matchIndex = match.index!;
+      // Note: metric values (match[1-3]) not used - we parse imperial from parentheses
+      const imperialPart = match[4];
+
+      // Parse imperial dimensions from parentheses
+      const imperialMatch = imperialPart.match(/(\d+\/\d+|\d+\.?\d*)[""']?\s*[*×xX]\s*(\d+)[""']?\s*[*×xX]\s*(\d+)/);
+      if (!imperialMatch) continue;
+
+      const thicknessStr = imperialMatch[1];
+      let thickness: number;
+      if (thicknessStr.includes('/')) {
+        const [num, denom] = thicknessStr.split('/').map(Number);
+        thickness = num / denom;
+      } else {
+        thickness = parseFloat(thicknessStr);
+      }
+      const widthIn = parseFloat(imperialMatch[2]);
+      const lengthIn = parseFloat(imperialMatch[3]);
+
+      if (isNaN(thickness) || isNaN(widthIn) || isNaN(lengthIn)) continue;
+
+      const size = {
+        thickness,
+        width: widthIn,
+        length: lengthIn,
+        thicknessFormatted: formatThickness(thickness),
+      };
+
+      // Find the bundle number closest to this size match
+      const nearestBundle = bundleMatches.find(b =>
+        b.index! > matchIndex && b.index! < matchIndex + 200
+      );
+
+      // Find piece count before the bundle number
+      const nearestPc = pcMatches.find(p =>
+        p.index! > matchIndex && p.index! < (nearestBundle?.index || matchIndex + 100)
+      );
+
+      // Find weights after the bundle number
+      const weightsAfter = weightMatches.filter(w =>
+        w.index > (nearestBundle?.index || matchIndex) &&
+        w.index < (nearestBundle?.index || matchIndex) + 150
+      );
+
+      lineNum++;
+      const bundleNo = nearestBundle ? nearestBundle[2] : String(lineNum).padStart(2, '0');
+      const pc = nearestPc ? parseInt(nearestPc[1], 10) : 1;
+
+      // Get the last two weights (net and gross) - they're usually at the end
+      const netWeightMT = weightsAfter.length >= 2 ? weightsAfter[weightsAfter.length - 2].value : 0;
+      const grossWeightMT = weightsAfter.length >= 1 ? weightsAfter[weightsAfter.length - 1].value : netWeightMT;
+
+      items.push({
+        lineNumber: lineNum,
+        inventoryId: buildInventoryId(size, 'wuu-jing'),
+        lotSerialNbr: buildLotSerialNbr(poNumber, bundleNo),
+        pieceCount: pc,
+        heatNumber: '',
+        grossWeightLbs: mtToLbs(grossWeightMT),
+        containerQtyLbs: mtToLbs(netWeightMT),
+        rawSize: fullMatch,
+      });
+    }
+
+    if (items.length > 0) break; // Found matches with this pattern
+  }
+
+  return items;
+}
+
+/**
+ * Format thickness helper for OCR parser
+ */
+function formatThickness(thickness: number): string {
+  return thickness.toFixed(3);
 }
 
 /**
