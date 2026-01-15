@@ -125,17 +125,17 @@ export const DEFAULT_WAREHOUSE = 'LA';
 // Warehouses
 export const WAREHOUSES = ['LA', 'Baltimore', 'Houston'] as const;
 
-// Acumatica output columns
+// Acumatica output columns - must match template exactly
 export const ACUMATICA_COLUMNS = [
   'Order Number',
   'Vendor',
   'Inventory ID',
-  'Lot/Serial',
+  'Lot/Serial Nbr.',
   'Piece Count',
   'Heat Number',
   'Gross Weight',
   'OrderQty',
-  'Container',
+  'Container Qty',
   'Unit Cost',
   'Warehouse',
   'UOM',
