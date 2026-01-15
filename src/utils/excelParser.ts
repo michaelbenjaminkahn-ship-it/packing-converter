@@ -180,36 +180,31 @@ function extractPoFromExcel(data: unknown[][]): string {
       // Skip empty cells
       if (!cellStr) continue;
 
-      // Pattern 1: Cell contains "EXCEL ORDER # 001726" (Yuen Chang)
-      if (cellUpper.includes('EXCEL') && cellUpper.includes('ORDER')) {
-        // Try to extract number from this cell
-        const match = cellStr.match(/ORDER\s*#?\s*:?\s*0*(\d{3,6})/i);
-        if (match) {
-          console.log('[PO Extract] Found EXCEL ORDER in cell at row', i, 'col', j, ':', cellStr, '-> PO:', match[1]);
-          return match[1];
-        }
-      }
-
-      // Pattern 2: Cell contains "ORDER NO.:" and number might be in same cell or next cell
-      if (cellUpper.includes('ORDER') && (cellUpper.includes('NO') || cellUpper.includes('#'))) {
-        // Try to get number from same cell first
-        const sameCell = cellStr.match(/ORDER\s*(?:NO\.?|#)\s*:?\s*0*(\d{3,6})/i);
-        if (sameCell) {
-          console.log('[PO Extract] Found ORDER NO with number in cell at row', i, 'col', j, ':', cellStr, '-> PO:', sameCell[1]);
-          return sameCell[1];
+      // Check if cell contains ORDER-related text
+      if (cellUpper.includes('ORDER')) {
+        // Comprehensive regex that handles:
+        // - "EXCEL METALS LLC ORDER NO.: 001772" (Wuu Jing)
+        // - "EXCEL ORDER # 001726" (Yuen Chang)
+        // - "ORDER NO.: 001772"
+        // - "ORDER # 1726"
+        const fullMatch = cellStr.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*0*(\d{3,6})/i);
+        if (fullMatch) {
+          console.log('[PO Extract] Found ORDER pattern with number in cell at row', i, 'col', j, ':', cellStr, '-> PO:', fullMatch[1]);
+          return fullMatch[1];
         }
 
-        // Check if number is in adjacent cells
+        // Cell has ORDER but no number - check adjacent cells
         console.log('[PO Extract] Found ORDER cell at row', i, 'col', j, ':', cellStr, '- checking adjacent cells');
-        for (let k = j + 1; k < Math.min(j + 4, row.length); k++) {
+        for (let k = j + 1; k < Math.min(j + 5, row.length); k++) {
           const nextCell = row[k];
           const nextType = typeof nextCell;
           let numValue: string;
 
           if (nextType === 'number') {
-            // Excel might store PO as number (1772 instead of "001772")
+            // Excel stores "001772" as number 1772
             numValue = String(nextCell);
           } else {
+            // Strip leading zeros from string
             numValue = String(nextCell ?? '').trim().replace(/^0+/, '');
           }
 
@@ -227,10 +222,10 @@ function extractPoFromExcel(data: unknown[][]): string {
     // Also try joining the row and matching (backup approach)
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
 
-    // Flexible pattern: "EXCEL" ... "ORDER" ... number
-    const flexMatch = rowText.match(/EXCEL.*ORDER\s*(?:NO\.?|#)?\s*:?\s*0*(\d{3,6})/i);
+    // Flexible pattern that handles various formats
+    const flexMatch = rowText.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*0*(\d{3,6})/i);
     if (flexMatch) {
-      console.log('[PO Extract] Found flexible EXCEL ORDER pattern in row', i, ':', rowText.substring(0, 100), '-> PO:', flexMatch[1]);
+      console.log('[PO Extract] Found ORDER pattern in joined row', i, ':', rowText.substring(0, 100), '-> PO:', flexMatch[1]);
       return flexMatch[1];
     }
   }
