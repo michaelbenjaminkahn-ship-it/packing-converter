@@ -1,8 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { PackingListItem, ParsedPackingList, Supplier } from '../types';
 import { detectSupplier, findPackingListPage } from './detection';
-import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs } from './conversion';
-import { VENDOR_CODES } from './constants';
+import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse } from './conversion';
+import { VENDOR_CODES, GAUGE_TO_DECIMAL } from './constants';
 import { extractTextWithOcr, checkOcrAccuracy, OcrProgress } from './ocr';
 
 // Configure PDF.js worker - must match pdfjs-dist package version (4.8.69)
@@ -49,37 +49,109 @@ export function parsePackingListFromText(
 }
 
 /**
+ * Extract finish code from Wuu Jing header text
+ * e.g., "NO.1 FINISH" -> "#1____"
+ */
+function extractWuuJingFinish(text: string): string {
+  const finishMatch = text.match(/NO\.?\s*(\d)\s*FINISH/i);
+  if (finishMatch) {
+    return `#${finishMatch[1]}___`;
+  }
+  return '#1___'; // Default
+}
+
+/**
  * Parse Wuu Jing packing list format
- * Expected columns: NO., SIZE, PC, BUNDLE NO., N'WEIGHT(MT), G'WEIGHT(MT)
+ * Expected columns: NO., SIZE, PC, BUNDLE NO., PRODUCT NO., CONTAINER NO., N'WEIGHT(MT), G'WEIGHT(MT)
+ * Example row: 1 | 9.53*1525MM*3050MM(3/8"*60"*120") | 6 | 001837-01 | | EITU3156602 | 2.112 | 2.125
  */
 function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
 
-  // Pattern to match Wuu Jing data rows
-  // Example: 1 4.76*1525MM*3660MM(3/16"*60"*144") 8 01 1.681 1.693
-  const rowPattern = /(\d+)\s+(\d+\.?\d*\*\d+MM\*\d+MM\([^)]+\))\s+(\d+)\s+(\d+)\s+(\d+\.?\d+)\s+(\d+\.?\d+)/g;
+  // Extract finish and warehouse from header
+  const finish = extractWuuJingFinish(text);
+  const warehouse = extractWarehouse(text);
 
-  let match;
-  let lineNum = 0;
-  while ((match = rowPattern.exec(text)) !== null) {
-    lineNum++;
-    const [, , sizeStr, pcStr, bundleNo, netWeightMT, grossWeightMT] = match;
+  // Find all size patterns with imperial dimensions
+  // Pattern: thickness*widthMM*lengthMM(imperial) followed by PC and bundle
+  const sizePattern = /(\d+\.?\d*)\s*\*\s*(\d+)\s*MM\s*\*\s*(\d+)\s*MM\s*\(([^)]+)\)/gi;
 
-    const size = parseSize(sizeStr, 'wuu-jing');
-    if (!size) continue;
+  // Find all bundle patterns: 001837-01, 001772-02, etc.
+  const bundlePattern = /(\d{6})-(\d{2})/g;
 
-    const grossWeightLbs = mtToLbs(parseFloat(grossWeightMT));
-    const netWeightLbs = mtToLbs(parseFloat(netWeightMT));
+  // Find all weight patterns (decimal numbers between 0.5 and 50 MT)
+  const weightPattern = /\b(\d{1,2}\.\d{3})\b/g;
+
+  // Extract all matches
+  const sizeMatches = [...text.matchAll(sizePattern)];
+  const bundleMatches = [...text.matchAll(bundlePattern)];
+  const weightMatches = [...text.matchAll(weightPattern)]
+    .map(m => ({ value: parseFloat(m[1]), index: m.index! }))
+    .filter(w => w.value >= 0.5 && w.value <= 50);
+
+  // Process each size match
+  for (let i = 0; i < sizeMatches.length; i++) {
+    const sizeMatch = sizeMatches[i];
+    const fullSizeStr = sizeMatch[0];
+    const imperialPart = sizeMatch[4];
+
+    // Parse imperial: 3/8"*60"*120"
+    const imperialMatch = imperialPart.match(/(\d+\/\d+|\d+\.?\d*)[""']?\s*\*\s*(\d+)[""']?\s*\*\s*(\d+)/);
+    if (!imperialMatch) continue;
+
+    const thicknessStr = imperialMatch[1];
+    let thickness: number;
+    if (thicknessStr.includes('/')) {
+      const [num, denom] = thicknessStr.split('/').map(Number);
+      thickness = num / denom;
+    } else {
+      thickness = parseFloat(thicknessStr);
+    }
+    const width = parseFloat(imperialMatch[2]);
+    const length = parseFloat(imperialMatch[3]);
+
+    if (isNaN(thickness) || isNaN(width) || isNaN(length)) continue;
+
+    const size = {
+      thickness,
+      width,
+      length,
+      thicknessFormatted: thickness.toFixed(3),
+    };
+
+    // Find corresponding bundle number (look for bundles after this size in the text)
+    const matchIndex = sizeMatch.index!;
+    const bundleMatch = bundleMatches.find(b =>
+      b.index! > matchIndex && b.index! < matchIndex + 300
+    );
+    const bundleNo = bundleMatch ? `${bundleMatch[1]}-${bundleMatch[2]}` : `${poNumber.padStart(6, '0')}-${String(i + 1).padStart(2, '0')}`;
+
+    // Find PC (piece count) - typically a small number (1-20) before the bundle
+    // Look for pattern: ) PC BUNDLE
+    const pcMatch = text.substring(matchIndex, matchIndex + 150).match(/\)\s*(\d{1,2})\s+\d{6}/);
+    const pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
+
+    // Find weights after the bundle number
+    const weightsAfter = weightMatches.filter(w =>
+      w.index > (bundleMatch?.index || matchIndex) &&
+      w.index < (bundleMatch?.index || matchIndex) + 100
+    );
+
+    // Weights come in pairs: net, gross
+    const netWeightMT = weightsAfter.length >= 1 ? weightsAfter[0].value : 0;
+    const grossWeightMT = weightsAfter.length >= 2 ? weightsAfter[1].value : netWeightMT;
 
     items.push({
-      lineNumber: lineNum,
-      inventoryId: buildInventoryId(size, 'wuu-jing'),
-      lotSerialNbr: buildLotSerialNbr(poNumber, bundleNo),
-      pieceCount: parseInt(pcStr, 10),
+      lineNumber: i + 1,
+      inventoryId: buildInventoryId(size, 'wuu-jing', finish),
+      lotSerialNbr: bundleNo,
+      pieceCount: pc,
       heatNumber: '',
-      grossWeightLbs,
-      containerQtyLbs: netWeightLbs,
-      rawSize: sizeStr,
+      grossWeightLbs: mtToLbs(grossWeightMT),
+      containerQtyLbs: mtToLbs(netWeightMT),
+      rawSize: fullSizeStr,
+      warehouse,
+      finish,
     });
   }
 
@@ -96,6 +168,10 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
  */
 function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
+
+  // Extract finish and warehouse from header
+  const finish = extractWuuJingFinish(text);
+  const warehouse = extractWarehouse(text);
 
   // Try OCR-optimized parsing first
   const ocrItems = parseWuuJingOcr(text, poNumber);
@@ -131,13 +207,15 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
 
       items.push({
         lineNumber: lineNum,
-        inventoryId: buildInventoryId(size, 'wuu-jing'),
+        inventoryId: buildInventoryId(size, 'wuu-jing', finish),
         lotSerialNbr: buildLotSerialNbr(poNumber, bundleNo),
         pieceCount: pc,
         heatNumber: '',
         grossWeightLbs: mtToLbs(grossWeightMT),
         containerQtyLbs: mtToLbs(netWeightMT),
         rawSize: sizeStr,
+        warehouse,
+        finish,
       });
     }
   }
@@ -151,6 +229,10 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
  */
 function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
+
+  // Extract finish and warehouse from header
+  const finish = extractWuuJingFinish(text);
+  const warehouse = extractWarehouse(text);
 
   // Clean OCR artifacts - common misreads
   const cleanText = text
@@ -168,7 +250,7 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
   ];
 
   // Find bundle number pattern: 001812-01, 001812-02, etc.
-  const bundlePattern = /00?(\d{4})-(\d{2})/g;
+  const bundlePattern = /(\d{6})-(\d{2})/g;
   const bundleMatches = [...cleanText.matchAll(bundlePattern)];
 
   // Find weight patterns: decimal numbers like 1.680, 1.693 (between 0.5 and 10)
@@ -179,7 +261,7 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
 
   // Find piece count patterns: small integers (1-20) that appear alone
   // Look for pattern like: size) 8 001812 or size) 10 001812
-  const pcPattern = /\)\s*(\d{1,2})\s+00/g;
+  const pcPattern = /\)\s*(\d{1,2})\s+\d{6}/g;
   const pcMatches = [...cleanText.matchAll(pcPattern)];
 
   let lineNum = 0;
@@ -233,7 +315,7 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
       );
 
       lineNum++;
-      const bundleNo = nearestBundle ? nearestBundle[2] : String(lineNum).padStart(2, '0');
+      const bundleNo = nearestBundle ? `${nearestBundle[1]}-${nearestBundle[2]}` : `${poNumber.padStart(6, '0')}-${String(lineNum).padStart(2, '0')}`;
       const pc = nearestPc ? parseInt(nearestPc[1], 10) : 1;
 
       // Get the last two weights (net and gross) - they're usually at the end
@@ -242,13 +324,15 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
 
       items.push({
         lineNumber: lineNum,
-        inventoryId: buildInventoryId(size, 'wuu-jing'),
-        lotSerialNbr: buildLotSerialNbr(poNumber, bundleNo),
+        inventoryId: buildInventoryId(size, 'wuu-jing', finish),
+        lotSerialNbr: bundleNo,
         pieceCount: pc,
         heatNumber: '',
         grossWeightLbs: mtToLbs(grossWeightMT),
         containerQtyLbs: mtToLbs(netWeightMT),
         rawSize: fullMatch,
+        warehouse,
+        finish,
       });
     }
 
@@ -266,32 +350,127 @@ function formatThickness(thickness: number): string {
 }
 
 /**
- * Parse Yuen Chang packing list format
+ * Extract finish from Yuen Chang section headers
+ * e.g., "304/304L 2B Finish" -> "2B", "304/304L #4 Finish" -> "#4"
  */
-function parseYuenChangText(text: string, poNumber: string): PackingListItem[] {
+function extractYuenChangFinish(text: string): string {
+  // Look for finish pattern in headers
+  const finishMatch = text.match(/304\/304L\s*(2B|#\d|BA)\s*Finish/i);
+  if (finishMatch) {
+    return finishMatch[1];
+  }
+  return '2B'; // Default
+}
+
+/**
+ * Parse Yuen Chang packing list format
+ * Columns: NO. | Item | SIZE (GA) | COIL NO. | Heat NO. | PCS | NET WEIGHT (LBS) | GROSS WEIGHT (LBS)
+ * Example: 1 | WM006 | 26GA x 48" x 120" | 43S02543-035 | S92HB05C | 128 | 3,730.22 | 3,884.54
+ */
+function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
 
-  // Pattern for Yuen Chang: gauge*width"*length"
-  const rowPattern = /(\d+)\s+(\d+GA\*?\d+"?\*?\d+"?)\s+(\d+)\s+([\d.]+)\s+([\d.]+)/g;
+  // Extract warehouse from destination
+  const warehouse = extractWarehouse(text);
 
-  let match;
-  let lineNum = 0;
-  while ((match = rowPattern.exec(text)) !== null) {
-    lineNum++;
-    const [, itemNo, sizeStr, pc, netWeight, grossWeight] = match;
+  // Track current finish (can change between sections)
+  let currentFinish = extractYuenChangFinish(text);
 
-    const size = parseSize(sizeStr, 'yuen-chang');
-    if (!size) continue;
+  // Find section headers to track finish changes
+  const sectionPattern = /304\/304L\s*(2B|#\d|BA)\s*Finish/gi;
+  const sections: { finish: string; index: number }[] = [];
+  let sectionMatch;
+  while ((sectionMatch = sectionPattern.exec(text)) !== null) {
+    sections.push({ finish: sectionMatch[1], index: sectionMatch.index });
+  }
+
+  // Pattern to match Yuen Chang rows
+  // Format: WM006 | 26GA x 48" x 120" | coil | heat | pcs | net | gross
+  // Item pattern: 2 uppercase letters + 3 digits (e.g., WM006, XL007, YF002, YN005)
+  const itemPattern = /\b([A-Z]{2}\d{3})\b/g;
+  const itemMatches = [...text.matchAll(itemPattern)];
+
+  // Size pattern: ##GA x ##" x ###"
+  const sizePattern = /(\d{1,2})GA\s*[x×*]\s*(\d{2,3})[""']?\s*[x×*]\s*(\d{2,3})[""']?/gi;
+  const sizeMatches = [...text.matchAll(sizePattern)];
+
+  // Heat number pattern: various formats
+  // Standard: YU107343, ZU407, S97PG13C, S98GA07D, ZT636, ZU195
+  // With hyphen: B6381-2000
+  const heatPattern = /\b([A-Z]{1,2}\d{1,2}[A-Z0-9]{2,6}|[A-Z]\d{4}-\d{3,4})\b/g;
+  const heatMatches = [...text.matchAll(heatPattern)];
+
+  // Weight pattern: numbers with commas like 3,730.22 or just 3730.22
+  const weightPattern = /\b(\d{1,2},?\d{3}\.?\d{0,2})\b/g;
+  const weightMatches = [...text.matchAll(weightPattern)]
+    .map(m => ({
+      value: parseFloat(m[1].replace(',', '')),
+      index: m.index!
+    }))
+    .filter(w => w.value >= 100 && w.value <= 100000); // Reasonable LBS range
+
+  // Process each size match
+  for (let i = 0; i < sizeMatches.length; i++) {
+    const sizeMatch = sizeMatches[i];
+    const matchIndex = sizeMatch.index!;
+    const gauge = parseInt(sizeMatch[1], 10);
+    const width = parseInt(sizeMatch[2], 10);
+    const length = parseInt(sizeMatch[3], 10);
+
+    // Find the current finish based on section
+    const activeSection = sections.filter(s => s.index < matchIndex).pop();
+    const finish = activeSection?.finish || currentFinish;
+
+    // Convert gauge to decimal
+    const gaugeKey = `${gauge}GA`;
+    const thickness = GAUGE_TO_DECIMAL[gaugeKey] || GAUGE_TO_DECIMAL[String(gauge)] || gauge / 1000;
+
+    const size = {
+      thickness,
+      width,
+      length,
+      thicknessFormatted: thickness.toFixed(3),
+    };
+
+    // Find the nearest item code (WM###, XL###, YF###, YN###, etc.) before this size
+    // Items appear in the row before the size, typically within 50 chars
+    const nearestItem = itemMatches
+      .filter(m => m.index! < matchIndex && m.index! > matchIndex - 50)
+      .pop();
+    const itemCode = nearestItem ? nearestItem[1] : `IT${String(i + 1).padStart(3, '0')}`;
+
+    // Find the nearest heat number after the size
+    const nearestHeat = heatMatches.find(m =>
+      m.index! > matchIndex && m.index! < matchIndex + 200
+    );
+    const heatNumber = nearestHeat ? nearestHeat[1] : '';
+
+    // Find piece count near this row
+    // Look for a small number (1-999) near the heat number
+    const contextText = text.substring(matchIndex, matchIndex + 300);
+    const pcsMatch = contextText.match(/\b(\d{1,3})\b.*?\b(\d{1,2},?\d{3}\.?\d*)\b/);
+    const pc = pcsMatch ? parseInt(pcsMatch[1], 10) : 1;
+
+    // Find weights - look for two consecutive weight values after the size
+    const weightsAfter = weightMatches.filter(w =>
+      w.index > matchIndex && w.index < matchIndex + 300
+    ).slice(0, 2);
+
+    // Yuen Chang weights are already in LBS
+    const netWeightLbs = weightsAfter.length >= 1 ? Math.round(weightsAfter[0].value) : 0;
+    const grossWeightLbs = weightsAfter.length >= 2 ? Math.round(weightsAfter[1].value) : netWeightLbs;
 
     items.push({
-      lineNumber: lineNum,
-      inventoryId: buildInventoryId(size, 'yuen-chang'),
-      lotSerialNbr: buildLotSerialNbr(poNumber, itemNo),
-      pieceCount: parseInt(pc, 10),
-      heatNumber: '',
-      grossWeightLbs: Math.round(parseFloat(grossWeight)),
-      containerQtyLbs: Math.round(parseFloat(netWeight)),
-      rawSize: sizeStr,
+      lineNumber: i + 1,
+      inventoryId: buildInventoryId(size, 'yuen-chang', finish),
+      lotSerialNbr: itemCode,
+      pieceCount: pc,
+      heatNumber,
+      grossWeightLbs,
+      containerQtyLbs: netWeightLbs,
+      rawSize: sizeMatch[0],
+      warehouse,
+      finish,
     });
   }
 
@@ -377,6 +556,9 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
   const totalGrossWeightLbs = items.reduce((sum, item) => sum + item.grossWeightLbs, 0);
   const totalNetWeightLbs = items.reduce((sum, item) => sum + item.containerQtyLbs, 0);
 
+  // Get warehouse from first item or extract from text
+  const warehouse = items[0]?.warehouse || extractWarehouse(packingListPage.text);
+
   return {
     supplier,
     vendorCode: VENDOR_CODES[supplier] || '',
@@ -384,6 +566,7 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
     items,
     totalGrossWeightLbs,
     totalNetWeightLbs,
+    warehouse,
   };
 }
 
@@ -434,6 +617,9 @@ export async function parsePdfWithOcr(
   const totalGrossWeightLbs = items.reduce((sum, item) => sum + item.grossWeightLbs, 0);
   const totalNetWeightLbs = items.reduce((sum, item) => sum + item.containerQtyLbs, 0);
 
+  // Get warehouse from first item or extract from text
+  const warehouse = items[0]?.warehouse || extractWarehouse(packingListPage.text);
+
   // Build warning message if accuracy is low
   let ocrWarning: string | undefined;
   if (!accuracy.isAcceptable) {
@@ -449,6 +635,7 @@ export async function parsePdfWithOcr(
     items,
     totalGrossWeightLbs,
     totalNetWeightLbs,
+    warehouse,
     ocrConfidence: accuracy.averageConfidence,
     ocrWarning,
   };
