@@ -238,7 +238,7 @@ function App() {
       setTimeout(() => {
         const resultWeightType = weightTypes[index] || defaultWeightType;
         downloadByContainer(result, warehouse, resultWeightType);
-      }, index * 500); // 500ms delay between each download
+      }, index * 1000); // 1 second delay between each download
     });
   }, [results, warehouse, weightTypes, defaultWeightType]);
 

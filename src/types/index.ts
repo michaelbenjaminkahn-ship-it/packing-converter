@@ -12,6 +12,9 @@ export interface PackingListItem {
   warehouse?: string;
   finish?: string;
   containerNumber?: string;
+  // Override fields - when set, these take precedence over calculated values
+  orderQtyOverride?: number;
+  unitCostOverride?: number;
 }
 
 export interface ParsedPackingList {

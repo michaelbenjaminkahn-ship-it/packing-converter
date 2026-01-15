@@ -67,10 +67,17 @@ export function toAcumaticaRows(
 
   return packingList.items.map((item, index) => {
     const weights = getWeight(item, weightType);
-    // Unit cost: net weight / piece count (weight per piece)
-    const unitCost = item.pieceCount > 0
+    // Unit cost: net weight / piece count (weight per piece), or use override
+    const calculatedUnitCost = item.pieceCount > 0
       ? Math.round((weights.net / item.pieceCount) * 100) / 100
       : 0;
+    const unitCost = item.unitCostOverride ?? calculatedUnitCost;
+
+    // OrderQty: use override if set, otherwise calculated per SKU
+    const orderQty = item.orderQtyOverride ?? orderQtyBySku[item.inventoryId];
+
+    // Warehouse: use item-level override if set
+    const itemWarehouse = item.warehouse || warehouse;
 
     return {
       orderNumber: packingList.poNumber,
@@ -80,10 +87,10 @@ export function toAcumaticaRows(
       pieceCount: item.pieceCount,
       heatNumber: item.heatNumber,
       grossWeight: weights.gross,
-      orderQty: orderQtyBySku[item.inventoryId], // Sum of container qty for this SKU
+      orderQty, // Sum of container qty for this SKU, or override
       container: weights.net, // Individual line container qty
       unitCost,
-      warehouse,
+      warehouse: itemWarehouse,
       uom: 'LB',
       orderLineNbr: lineNumberStart + index,
     };
