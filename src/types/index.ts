@@ -3,22 +3,21 @@ export type Supplier = 'wuu-jing' | 'yuen-chang' | 'unknown';
 export interface PackingListItem {
   lineNumber: number;
   inventoryId: string;
-  description: string;
-  quantity: number;
-  weightMT: number;
-  weightLbs: number;
-  heatNumber?: string;
-  bundleNumber?: string;
+  lotSerialNbr: string;
+  pieceCount: number;
+  heatNumber: string;
+  grossWeightLbs: number;
+  containerQtyLbs: number;
+  rawSize: string;
 }
 
 export interface ParsedPackingList {
   supplier: Supplier;
-  poNumber?: string;
-  invoiceNumber?: string;
-  shipDate?: string;
+  vendorCode: string;
+  poNumber: string;
   items: PackingListItem[];
-  totalWeightMT: number;
-  totalWeightLbs: number;
+  totalGrossWeightLbs: number;
+  totalNetWeightLbs: number;
 }
 
 export interface UploadedFile {
@@ -35,4 +34,34 @@ export interface ConversionResult {
   success: boolean;
   data?: ParsedPackingList;
   error?: string;
+}
+
+export interface AcumaticaRow {
+  orderNumber: string;
+  vendor: string;
+  inventoryId: string;
+  lotSerialNbr: string;
+  pieceCount: number;
+  heatNumber: string;
+  grossWeight: number;
+  orderQty: string;
+  containerQty: number;
+  unitCost: string;
+  warehouse: string;
+  uom: string;
+  orderLineNbr: string;
+}
+
+export interface PageScore {
+  pageNumber: number;
+  score: number;
+  isPackingList: boolean;
+  text: string;
+}
+
+export interface ParsedSize {
+  thickness: number;
+  width: number;
+  length: number;
+  thicknessFormatted: string;
 }
