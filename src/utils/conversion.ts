@@ -194,14 +194,14 @@ export function buildLotSerialNbr(poNumber: string, bundleNumber: string | numbe
 
 /**
  * Extract PO number from filename or text
+ * Only matches explicit PO patterns, not random numbers or timestamps
  */
 export function extractPoNumber(text: string): string {
-  // Look for PO number patterns
+  // Look for explicit PO number patterns only
   const patterns = [
-    /PO[:\s#]*(\d+)/i,
-    /P\.?O\.?[:\s#]*(\d+)/i,
-    /ORDER[:\s#]*(\d+)/i,
-    /(\d{4,6})/,  // Fallback: any 4-6 digit number
+    /PO[:\s#-]*(\d{3,6})/i,
+    /P\.?O\.?[:\s#-]*(\d{3,6})/i,
+    /ORDER[:\s#-]*(\d{3,6})/i,
   ];
 
   for (const pattern of patterns) {
@@ -211,5 +211,6 @@ export function extractPoNumber(text: string): string {
     }
   }
 
+  // Don't fallback to random numbers - require explicit PO pattern
   return '';
 }
