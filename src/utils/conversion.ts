@@ -205,8 +205,8 @@ export function buildLotSerialNbr(poNumber: string, bundleOrItem: string | numbe
     return bundleStr;
   }
 
-  // If it's an item code (like "WM006"), use as-is
-  if (bundleStr.match(/^[A-Z]{2}\d+$/i)) {
+  // If it's an item code (like "WM006", "XL007"), use as-is
+  if (bundleStr.match(/^[A-Z]{2}\d{3}$/i)) {
     return bundleStr;
   }
 

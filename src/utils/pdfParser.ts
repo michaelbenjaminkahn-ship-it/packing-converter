@@ -386,16 +386,17 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
 
   // Pattern to match Yuen Chang rows
   // Format: WM006 | 26GA x 48" x 120" | coil | heat | pcs | net | gross
-  // Item pattern: WM followed by 3 digits
-  const itemPattern = /\b(WM\d{3})\b/g;
+  // Item pattern: WM or XL followed by 3 digits (e.g., WM006, XL007, XL025)
+  const itemPattern = /\b([WX][LM]\d{3})\b/g;
   const itemMatches = [...text.matchAll(itemPattern)];
 
   // Size pattern: ##GA x ##" x ###"
   const sizePattern = /(\d{1,2})GA\s*[x×*]\s*(\d{2,3})[""']?\s*[x×*]\s*(\d{2,3})[""']?/gi;
   const sizeMatches = [...text.matchAll(sizePattern)];
 
-  // Heat number pattern: alphanumeric like S92HB05C, YU107349, etc.
-  const heatPattern = /\b([A-Z]{1,2}\d{2}[A-Z0-9]{3,6})\b/g;
+  // Heat number pattern: various formats like YU107343, ZU407, S97PG13C, S98GA07D, ZT636, ZU195
+  // Format: 1-2 letters + 1-2 digits + alphanumeric (3-6 chars)
+  const heatPattern = /\b([A-Z]{1,2}\d{1,2}[A-Z0-9]{2,6})\b/g;
   const heatMatches = [...text.matchAll(heatPattern)];
 
   // Weight pattern: numbers with commas like 3,730.22 or just 3730.22
@@ -430,11 +431,12 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
       thicknessFormatted: thickness.toFixed(3),
     };
 
-    // Find the nearest item (WM###) before this size
+    // Find the nearest item (WM### or XL###) before this size
+    // Items appear in the row before the size, typically within 50 chars
     const nearestItem = itemMatches
-      .filter(m => m.index! < matchIndex && m.index! > matchIndex - 100)
+      .filter(m => m.index! < matchIndex && m.index! > matchIndex - 50)
       .pop();
-    const itemCode = nearestItem ? nearestItem[1] : `WM${String(i + 1).padStart(3, '0')}`;
+    const itemCode = nearestItem ? nearestItem[1] : `XL${String(i + 1).padStart(3, '0')}`;
 
     // Find the nearest heat number after the size
     const nearestHeat = heatMatches.find(m =>
