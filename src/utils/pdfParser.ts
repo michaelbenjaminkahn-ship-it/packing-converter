@@ -1,7 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { PackingListItem, ParsedPackingList, Supplier } from '../types';
 import { detectSupplier, findPackingListPage } from './detection';
-import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse } from './conversion';
+import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse, extractPoFromBundles, extractPoNumber } from './conversion';
 import { VENDOR_CODES, GAUGE_TO_DECIMAL } from './constants';
 import { extractTextWithOcr, checkOcrAccuracy, OcrProgress } from './ocr';
 
@@ -225,11 +225,10 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
 
 /**
  * OCR-optimized Wuu Jing parsing - handles imperfect text
- * Looks for: size patterns, bundle numbers (001812-XX), and weights (X.XXX MT)
+ * Primary strategy: Use bundle numbers as anchors (more reliably detected)
+ * Looks for: bundle numbers (001812-XX), imperial dimensions, and weights (X.XXX MT)
  */
 function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
-  const items: PackingListItem[] = [];
-
   // Extract finish and warehouse from header
   const finish = extractWuuJingFinish(text);
   const warehouse = extractWarehouse(text);
@@ -247,6 +246,19 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
     .replace(/\bMIVI\b/gi, 'MM') // Another common OCR for MM
     .replace(/\s+/g, ' '); // normalize whitespace
 
+  // Find bundle number pattern: 001812-01, 001812-02, etc.
+  // Bundle numbers are the most reliable anchor in OCR text
+  const bundlePattern = /(\d{6})-(\d{2})/g;
+  const bundleMatches = [...cleanText.matchAll(bundlePattern)];
+
+  // If we have bundle numbers, use bundle-anchored parsing (primary strategy for OCR)
+  if (bundleMatches.length > 0) {
+    return parseWuuJingByBundles(cleanText, poNumber, finish, warehouse, bundleMatches);
+  }
+
+  // Fallback: Try size-pattern based parsing
+  const items: PackingListItem[] = [];
+
   // Find all size patterns - more flexible matching for OCR
   // Pattern: thickness*widthMM*lengthMM(imperial)
   const sizePatterns = [
@@ -259,10 +271,6 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
     // OCR friendly - MM might be misread as MN, NN, etc.
     /(\d+\.?\d*)\s*[*×xX]\s*(\d+)\s*[MN][MN]\s*[*×xX]\s*(\d+)\s*[MN][MN]\s*\(([^)]+)\)/gi,
   ];
-
-  // Find bundle number pattern: 001812-01, 001812-02, etc.
-  const bundlePattern = /(\d{6})-(\d{2})/g;
-  const bundleMatches = [...cleanText.matchAll(bundlePattern)];
 
   // Find weight patterns: decimal numbers like 1.680, 1.693 (between 0.5 and 10)
   const weightPattern = /(\d+\.\d{2,3})/g;
@@ -350,17 +358,12 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
     if (items.length > 0) break; // Found matches with this pattern
   }
 
-  // If still no items, try bundle-anchored parsing
-  if (items.length === 0 && bundleMatches.length > 0) {
-    return parseWuuJingByBundles(cleanText, poNumber, finish, warehouse, bundleMatches);
-  }
-
   return items;
 }
 
 /**
- * Fallback Wuu Jing parsing - uses bundle numbers as anchors
- * For when OCR quality is too low to reliably extract size patterns
+ * Primary Wuu Jing parsing for OCR - uses bundle numbers as anchors
+ * Bundle numbers (001812-01) are more reliably detected by OCR than full size patterns
  */
 function parseWuuJingByBundles(
   text: string,
@@ -371,16 +374,42 @@ function parseWuuJingByBundles(
 ): PackingListItem[] {
   const items: PackingListItem[] = [];
 
-  // Try to find imperial dimensions anywhere in the text
-  // Pattern: (3/16"*60"*144") or 3/16" * 60" * 144"
-  const imperialPattern = /(\d+\/\d+|\d+\.?\d*)[""']?\s*[*×xX]\s*(\d+)[""']?\s*[*×xX]\s*(\d+)/g;
-  const imperialMatches = [...text.matchAll(imperialPattern)];
+  // Find ALL imperial dimension patterns in the text
+  // Multiple patterns for OCR flexibility
+  const imperialPatterns = [
+    // Standard: 3/16"*60"*144" or 1/4"*48"*120"
+    /(\d+\/\d+)[""']?\s*[*×xX]\s*(\d+)[""']?\s*[*×xX]\s*(\d+)/g,
+    // Decimal thickness: 0.188"*60"*144"
+    /(\d+\.\d+)[""']?\s*[*×xX]\s*(\d+)[""']?\s*[*×xX]\s*(\d+)/g,
+    // Without quotes: 3/16 * 60 * 144
+    /(\d+\/\d+)\s*[*×xX]\s*(\d+)\s*[*×xX]\s*(\d+)/g,
+  ];
 
-  // Find weight patterns
-  const weightPattern = /(\d+\.\d{2,3})/g;
+  // Collect all imperial matches from all patterns
+  const allImperialMatches: Array<{match: RegExpMatchArray, index: number}> = [];
+  for (const pattern of imperialPatterns) {
+    const matches = [...text.matchAll(pattern)];
+    for (const m of matches) {
+      // Filter to reasonable dimensions (width 36-72", length 96-180")
+      const w = parseFloat(m[2]);
+      const l = parseFloat(m[3]);
+      if (w >= 36 && w <= 72 && l >= 96 && l <= 180) {
+        allImperialMatches.push({ match: m, index: m.index! });
+      }
+    }
+  }
+
+  // Sort by index
+  allImperialMatches.sort((a, b) => a.index - b.index);
+
+  // Find weight patterns (MT weights: 0.500 to 50.000)
+  const weightPattern = /(\d{1,2}\.\d{2,3})/g;
   const weightMatches = [...text.matchAll(weightPattern)]
     .map(m => ({ value: parseFloat(m[1]), index: m.index! }))
-    .filter(w => w.value >= 0.5 && w.value <= 50);
+    .filter(w => w.value >= 0.3 && w.value <= 50);
+
+  // Track the last valid size (for carry-forward when OCR misses a size)
+  let lastValidSize: { thickness: number; width: number; length: number; thicknessFormatted: string } | null = null;
 
   // Process each bundle number as an anchor
   for (let i = 0; i < bundleMatches.length; i++) {
@@ -388,85 +417,87 @@ function parseWuuJingByBundles(
     const bundleNo = `${bundleMatch[1]}-${bundleMatch[2]}`;
     const bundleIndex = bundleMatch.index!;
 
-    // Try to find an imperial dimension near this bundle (before it)
-    // Look back up to 300 chars
-    const lookbackStart = Math.max(0, bundleIndex - 300);
-    const lookbackText = text.substring(lookbackStart, bundleIndex);
+    // Look for imperial dimension before this bundle (within 400 chars)
+    const lookbackStart = Math.max(0, bundleIndex - 400);
+    const lookbackRange = { start: lookbackStart, end: bundleIndex };
+
+    // Find the closest imperial match before this bundle
+    const matchesBeforeBundle = allImperialMatches.filter(m =>
+      m.index >= lookbackRange.start && m.index < lookbackRange.end
+    );
 
     let size = null;
-    const localImperial = lookbackText.match(/(\d+\/\d+|\d+\.?\d*)[""']?\s*[*×xX]\s*(\d+)[""']?\s*[*×xX]\s*(\d+)/);
 
-    if (localImperial) {
-      const thicknessStr = localImperial[1];
+    if (matchesBeforeBundle.length > 0) {
+      // Use the closest one (last in the list)
+      const nearest = matchesBeforeBundle[matchesBeforeBundle.length - 1];
+      const thicknessStr = nearest.match[1];
       let thickness: number;
+
       if (thicknessStr.includes('/')) {
         const [num, denom] = thicknessStr.split('/').map(Number);
         thickness = num / denom;
       } else {
         thickness = parseFloat(thicknessStr);
       }
-      const width = parseFloat(localImperial[2]);
-      const length = parseFloat(localImperial[3]);
 
-      if (!isNaN(thickness) && !isNaN(width) && !isNaN(length)) {
+      const width = parseFloat(nearest.match[2]);
+      const length = parseFloat(nearest.match[3]);
+
+      if (!isNaN(thickness) && !isNaN(width) && !isNaN(length) && thickness > 0 && thickness < 2) {
         size = {
           thickness,
           width,
           length,
           thicknessFormatted: formatThickness(thickness),
         };
+        lastValidSize = size; // Save for carry-forward
       }
     }
 
-    // If we couldn't find a local size, try to use the nearest from all matches
-    if (!size && imperialMatches.length > 0) {
-      // Find closest imperial match before this bundle
-      const nearestImperial = imperialMatches
-        .filter(m => m.index! < bundleIndex)
-        .pop();
+    // If no size found, use carry-forward from previous bundle
+    if (!size && lastValidSize) {
+      size = lastValidSize;
+    }
 
-      if (nearestImperial) {
-        const thicknessStr = nearestImperial[1];
-        let thickness: number;
-        if (thicknessStr.includes('/')) {
-          const [num, denom] = thicknessStr.split('/').map(Number);
-          thickness = num / denom;
-        } else {
-          thickness = parseFloat(thicknessStr);
-        }
-        const width = parseFloat(nearestImperial[2]);
-        const length = parseFloat(nearestImperial[3]);
+    // If still no size, skip this bundle
+    if (!size) continue;
 
-        if (!isNaN(thickness) && !isNaN(width) && !isNaN(length)) {
-          size = {
-            thickness,
-            width,
-            length,
-            thicknessFormatted: formatThickness(thickness),
-          };
+    // Find piece count - look for small number (1-20) near the bundle
+    // Piece count usually appears just before the bundle number
+    const lookbackText = text.substring(lookbackStart, bundleIndex);
+    const pcPatterns = [
+      /\b(\d{1,2})\s+\d{6}-\d{2}/,  // "8 001812-01"
+      /\)\s*(\d{1,2})\s+\d{6}/,      // ") 8 001812"
+      /\b(\d{1,2})\s*$/,             // ends with small number
+    ];
+
+    let pc = 1;
+    for (const pcPattern of pcPatterns) {
+      const pcMatch = lookbackText.match(pcPattern);
+      if (pcMatch) {
+        const foundPc = parseInt(pcMatch[1], 10);
+        if (foundPc > 0 && foundPc <= 20) {
+          pc = foundPc;
+          break;
         }
       }
     }
 
-    if (!size) continue; // Skip if we couldn't find any size
-
-    // Find piece count - look for small number (1-20) before the bundle
-    const pcMatch = lookbackText.match(/\b(\d{1,2})\s*$/);
-    const pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
-
-    // Find weights after the bundle number (within 100 chars)
+    // Find weights after the bundle number (within 150 chars)
     const weightsAfter = weightMatches.filter(w =>
-      w.index > bundleIndex && w.index < bundleIndex + 100
+      w.index > bundleIndex && w.index < bundleIndex + 150
     );
 
-    const netWeightMT = weightsAfter.length >= 2 ? weightsAfter[weightsAfter.length - 2].value : 0;
-    const grossWeightMT = weightsAfter.length >= 1 ? weightsAfter[weightsAfter.length - 1].value : netWeightMT;
+    // Take first two weights after bundle (net, gross)
+    const netWeightMT = weightsAfter.length >= 1 ? weightsAfter[0].value : 0;
+    const grossWeightMT = weightsAfter.length >= 2 ? weightsAfter[1].value : netWeightMT;
 
     items.push({
       lineNumber: i + 1,
       inventoryId: buildInventoryId(size, 'wuu-jing', finish),
       lotSerialNbr: bundleNo,
-      pieceCount: pc > 0 && pc <= 20 ? pc : 1,
+      pieceCount: pc,
       heatNumber: '',
       grossWeightLbs: mtToLbs(grossWeightMT),
       containerQtyLbs: mtToLbs(netWeightMT),
@@ -696,10 +727,24 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
   // Get warehouse from first item or extract from text
   const warehouse = items[0]?.warehouse || extractWarehouse(packingListPage.text);
 
+  // Auto-detect PO if not provided or is UNKNOWN
+  let finalPoNumber = poNumber;
+  if (!poNumber || poNumber === 'UNKNOWN') {
+    // Try to extract from bundle numbers (Wuu Jing)
+    const bundlePo = extractPoFromBundles(packingListPage.text);
+    if (bundlePo) {
+      finalPoNumber = bundlePo;
+    } else {
+      // Try to extract from text (explicit PO patterns)
+      const textPo = extractPoNumber(packingListPage.text);
+      finalPoNumber = textPo || '';
+    }
+  }
+
   return {
     supplier,
     vendorCode: VENDOR_CODES[supplier] || '',
-    poNumber,
+    poNumber: finalPoNumber,
     items,
     totalGrossWeightLbs,
     totalNetWeightLbs,
@@ -757,6 +802,20 @@ export async function parsePdfWithOcr(
   // Get warehouse from first item or extract from text
   const warehouse = items[0]?.warehouse || extractWarehouse(packingListPage.text);
 
+  // Auto-detect PO if not provided or is UNKNOWN
+  let finalPoNumber = poNumber;
+  if (!poNumber || poNumber === 'UNKNOWN') {
+    // Try to extract from bundle numbers (Wuu Jing)
+    const bundlePo = extractPoFromBundles(packingListPage.text);
+    if (bundlePo) {
+      finalPoNumber = bundlePo;
+    } else {
+      // Try to extract from text (explicit PO patterns)
+      const textPo = extractPoNumber(packingListPage.text);
+      finalPoNumber = textPo || '';
+    }
+  }
+
   // Build warning message if accuracy is low
   let ocrWarning: string | undefined;
   if (!accuracy.isAcceptable) {
@@ -768,7 +827,7 @@ export async function parsePdfWithOcr(
   return {
     supplier,
     vendorCode: VENDOR_CODES[supplier] || '',
-    poNumber,
+    poNumber: finalPoNumber,
     items,
     totalGrossWeightLbs,
     totalNetWeightLbs,
