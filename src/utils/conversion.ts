@@ -254,3 +254,41 @@ export function extractPoNumber(text: string): string {
   // Don't fallback to random numbers - require explicit PO pattern
   return '';
 }
+
+/**
+ * Extract PO number from Wuu Jing bundle numbers
+ * Bundle format: 001812-01 -> PO# 1812
+ * Returns the most common PO found, or empty string if none found
+ */
+export function extractPoFromBundles(text: string): string {
+  const bundlePattern = /(\d{6})-\d{2}/g;
+  const matches = [...text.matchAll(bundlePattern)];
+
+  if (matches.length === 0) {
+    return '';
+  }
+
+  // Count PO occurrences
+  const poCounts: Record<string, number> = {};
+  for (const match of matches) {
+    // Remove leading zeros: 001812 -> 1812
+    const po = match[1].replace(/^0+/, '') || '0';
+    poCounts[po] = (poCounts[po] || 0) + 1;
+  }
+
+  // Return the most common PO
+  const sortedPos = Object.entries(poCounts).sort((a, b) => b[1] - a[1]);
+  return sortedPos[0]?.[0] || '';
+}
+
+/**
+ * Extract multiple PO numbers from Yuen Chang packing lists
+ * Returns array of unique PO numbers found
+ */
+export function extractMultiplePos(text: string): string[] {
+  const poPattern = /PO[:\s#-]*(\d{3,6})/gi;
+  const matches = [...text.matchAll(poPattern)];
+
+  const uniquePos = [...new Set(matches.map(m => m[1]))];
+  return uniquePos;
+}
