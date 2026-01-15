@@ -160,6 +160,15 @@ export function downloadExcel(
 }
 
 /**
+ * Generate filename in format: PO#1726 Container#TCLU7614333.xlsx
+ */
+function generateFilename(poNumber: string, containerNumber: string | undefined): string {
+  const poStr = poNumber && poNumber !== 'UNKNOWN' ? poNumber : 'Unknown';
+  const containerStr = containerNumber || `TEMP${Date.now().toString().slice(-6)}`;
+  return `PO#${poStr} Container#${containerStr}.xlsx`;
+}
+
+/**
  * Split packing list by container and download separate files
  */
 export function downloadByContainer(
@@ -172,8 +181,8 @@ export function downloadByContainer(
 
   if (containers.length <= 1) {
     // Only one or no containers, download as single file
-    const containerNum = containers[0] || 'ALL';
-    const filename = `PO${packingList.poNumber}_Container_${containerNum}.xlsx`;
+    const containerNum = containers[0];
+    const filename = generateFilename(packingList.poNumber, containerNum);
     downloadExcel(packingList, warehouse, weightType, filename);
     return;
   }
@@ -192,7 +201,7 @@ export function downloadByContainer(
     const blob = exportToExcel(containerPackingList, warehouse, weightType);
     const url = URL.createObjectURL(blob);
 
-    const filename = `PO${packingList.poNumber}_Container_${containerNum}.xlsx`;
+    const filename = generateFilename(packingList.poNumber, containerNum);
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
