@@ -12,20 +12,25 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
   // Search ALL sheets for PO number and warehouse (they might be on invoice sheet)
+  console.log('[parseExcel] Workbook sheets:', workbook.SheetNames);
   let extractedPo = '';
   let extractedWarehouse = '';
   for (const sheetName of workbook.SheetNames) {
+    console.log('[parseExcel] Scanning sheet:', sheetName);
     const sheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
+    console.log('[parseExcel] Sheet', sheetName, 'has', data.length, 'rows');
 
     if (!extractedPo) {
       extractedPo = extractPoFromExcel(data);
+      console.log('[parseExcel] PO from', sheetName, ':', extractedPo || '(empty)');
     }
     if (!extractedWarehouse) {
       extractedWarehouse = extractWarehouseFromExcel(data);
     }
     if (extractedPo && extractedWarehouse) break;
   }
+  console.log('[parseExcel] Final extracted PO:', extractedPo || 'NONE');
 
   // Find the sheet most likely to be a packing list
   const bestSheet = findPackingListSheet(workbook);
@@ -149,23 +154,19 @@ function findPackingListSheet(workbook: XLSX.WorkBook): { name: string; data: un
  * Looks for patterns like "ORDER NO.: 001772" or "EXCEL ORDER # 001726"
  */
 function extractPoFromExcel(data: unknown[][]): string {
-  // FIRST: Try to extract from bundle numbers - most reliable for WJ (e.g., 001772-01 -> PO 1772)
-  for (let i = 0; i < data.length; i++) {
-    const row = data[i];
-    if (!row || !Array.isArray(row)) continue;
+  console.log('[PO Extract] Starting extraction, total rows:', data.length);
 
-    for (const cell of row) {
-      const cellStr = String(cell ?? '');
-      // Match bundle pattern: 6 digits followed by dash and 2 digits
-      const bundleMatch = cellStr.match(/(\d{6})-\d{2}/);
-      if (bundleMatch) {
-        // Remove leading zeros: 001772 -> 1772
-        return bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
-      }
+  // Log first 20 rows for debugging
+  console.log('[PO Extract] First 20 rows of data:');
+  for (let i = 0; i < Math.min(data.length, 20); i++) {
+    const row = data[i];
+    if (row && Array.isArray(row)) {
+      console.log(`  Row ${i}:`, row.map(c => String(c ?? '')).join(' | '));
     }
   }
 
-  // Search all rows for explicit ORDER patterns
+  // FIRST: Search header area for explicit ORDER patterns (most reliable)
+  console.log('[PO Extract] Searching for ORDER patterns in all rows...');
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
@@ -175,12 +176,14 @@ function extractPoFromExcel(data: unknown[][]): string {
     // Pattern: "EXCEL ORDER # 001726" or "EXCEL ORDER #001726" (Yuen Chang format)
     const excelOrderMatch = rowText.match(/EXCEL\s*ORDER\s*#?\s*:?\s*0*(\d{3,6})/i);
     if (excelOrderMatch) {
+      console.log('[PO Extract] Found EXCEL ORDER pattern in row', i, ':', rowText, '-> PO:', excelOrderMatch[1]);
       return excelOrderMatch[1];
     }
 
     // Pattern: "EXCEL METALS LLC ORDER NO.: 001837" (Wuu Jing format)
     const excelMetalsMatch = rowText.match(/EXCEL\s*METALS.*ORDER\s*NO\.?\s*:?\s*0*(\d{3,6})/i);
     if (excelMetalsMatch) {
+      console.log('[PO Extract] Found EXCEL METALS pattern in row', i, ':', rowText, '-> PO:', excelMetalsMatch[1]);
       return excelMetalsMatch[1];
     }
 
@@ -188,6 +191,7 @@ function extractPoFromExcel(data: unknown[][]): string {
     if (rowText.toUpperCase().includes('ORDER') && !rowText.toUpperCase().includes('INVOICE NO')) {
       const orderNoMatch = rowText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*0*(\d{3,6})/i);
       if (orderNoMatch) {
+        console.log('[PO Extract] Found ORDER NO pattern in row', i, ':', rowText, '-> PO:', orderNoMatch[1]);
         return orderNoMatch[1];
       }
     }
@@ -200,13 +204,16 @@ function extractPoFromExcel(data: unknown[][]): string {
       // Check if this cell ends with ORDER NO pattern (number in next cell)
       if (cellUpper.includes('ORDER') && (cellUpper.endsWith('NO.') || cellUpper.endsWith('NO.:') ||
           cellUpper.endsWith('NO:') || cellUpper.endsWith('NO') || cellUpper.endsWith('#'))) {
+        console.log('[PO Extract] Found ORDER cell at row', i, 'col', j, ':', cellText);
         // Look at next cells for the number
         for (let k = j + 1; k < Math.min(j + 3, row.length); k++) {
           const nextCell = row[k];
           // Handle both string and number types
           const nextValue = typeof nextCell === 'number' ? nextCell : String(nextCell ?? '');
           const numStr = String(nextValue).replace(/^0+/, '');
+          console.log('[PO Extract]   Next cell', k, ':', nextCell, '(type:', typeof nextCell, ') -> numStr:', numStr);
           if (/^\d{3,6}$/.test(numStr)) {
+            console.log('[PO Extract] Found PO in adjacent cell:', numStr);
             return numStr;
           }
         }
@@ -216,12 +223,32 @@ function extractPoFromExcel(data: unknown[][]): string {
       if (cellUpper.includes('ORDER') && !cellUpper.includes('INVOICE')) {
         const cellMatch = cellText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*0*(\d{3,6})/i);
         if (cellMatch) {
+          console.log('[PO Extract] Found full ORDER pattern in cell at row', i, ':', cellText, '-> PO:', cellMatch[1]);
           return cellMatch[1];
         }
       }
     }
   }
 
+  // SECOND: Try to extract from bundle numbers in data rows (e.g., 001772-01 -> PO 1772)
+  console.log('[PO Extract] No ORDER pattern found, trying bundle patterns...');
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    if (!row || !Array.isArray(row)) continue;
+
+    for (const cell of row) {
+      const cellStr = String(cell ?? '');
+      // Match bundle pattern: 6 digits followed by dash and 2 digits
+      const bundleMatch = cellStr.match(/(\d{6})-\d{2}/);
+      if (bundleMatch) {
+        const po = bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
+        console.log('[PO Extract] Found bundle pattern:', cellStr, '-> PO:', po);
+        return po;
+      }
+    }
+  }
+
+  console.log('[PO Extract] No patterns found, returning empty string');
   return '';
 }
 
