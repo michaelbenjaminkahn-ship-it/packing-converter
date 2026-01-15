@@ -214,7 +214,7 @@ export function EditableResultsTable({
         } ${isNumeric ? 'text-right block' : ''}`}
         title="Click to edit"
       >
-        {isNumeric ? Number(value).toLocaleString() : value || '-'}
+        {value === '' || value === undefined ? '-' : isNumeric ? Number(value).toLocaleString() : value}
       </span>
     );
   };
@@ -341,11 +341,9 @@ export function EditableResultsTable({
                 .reduce((sum, i) => sum + i.containerQtyLbs, 0);
               const orderQty = item.orderQtyOverride ?? calculatedOrderQty;
 
-              // Unit cost: containerQtyLbs / pieceCount (weight per piece)
-              const calculatedUnitCost = item.pieceCount > 0
-                ? Math.round((item.containerQtyLbs / item.pieceCount) * 100) / 100
-                : 0;
-              const unitCost = item.unitCostOverride ?? calculatedUnitCost;
+              // Unit cost: blank by default - price data comes from invoice, not packing list
+              // User can manually enter via unitCostOverride
+              const unitCost = item.unitCostOverride ?? '';
 
               // Warehouse: use item-level override or default
               const itemWarehouse = item.warehouse || warehouse;

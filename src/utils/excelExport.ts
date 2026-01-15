@@ -67,11 +67,9 @@ export function toAcumaticaRows(
 
   return packingList.items.map((item, index) => {
     const weights = getWeight(item, weightType);
-    // Unit cost: net weight / piece count (weight per piece), or use override
-    const calculatedUnitCost = item.pieceCount > 0
-      ? Math.round((weights.net / item.pieceCount) * 100) / 100
-      : 0;
-    const unitCost = item.unitCostOverride ?? calculatedUnitCost;
+    // Unit cost: blank by default - price data comes from invoice, not packing list
+    // User can manually enter via unitCostOverride
+    const unitCost = item.unitCostOverride ?? 0;
 
     // OrderQty: use override if set, otherwise calculated per SKU
     const orderQty = item.orderQtyOverride ?? orderQtyBySku[item.inventoryId];
