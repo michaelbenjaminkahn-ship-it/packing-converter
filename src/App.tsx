@@ -232,8 +232,11 @@ function App() {
     if (results.length === 0) return;
 
     // Export each packing list, splitting by container
-    results.forEach((result) => {
-      downloadByContainer(result, warehouse, weightType);
+    // Stagger downloads to prevent browser from blocking multiple rapid downloads
+    results.forEach((result, index) => {
+      setTimeout(() => {
+        downloadByContainer(result, warehouse, weightType);
+      }, index * 500); // 500ms delay between each download
     });
   }, [results, warehouse, weightType]);
 
