@@ -382,7 +382,7 @@ function App() {
                 Packing List Converter
               </h1>
               <p className="text-sm text-navy-200 mt-0.5">
-                Convert steel supplier packing lists for Acumatica import
+                Convert supplier packing lists for Acumatica import
               </p>
             </div>
             <div className="flex items-center gap-3">
