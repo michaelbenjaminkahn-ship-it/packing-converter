@@ -176,20 +176,60 @@ export function parseSize(sizeStr: string, supplier: Supplier): ParsedSize | nul
 /**
  * Build Inventory ID from parsed size
  * Format: {thickness}-{width}__-{length}__-304/304L-{finish}
+ * @param size - Parsed size dimensions
+ * @param supplier - Supplier name (used for default finish)
+ * @param finish - Optional explicit finish override (e.g., "#1", "2B", "#4")
  */
-export function buildInventoryId(size: ParsedSize, supplier: Supplier): string {
-  const finish = FINISH_CODES[supplier] || FINISH_CODES['wuu-jing'];
-  return `${size.thicknessFormatted}-${size.width}__-${size.length}__-304/304L-${finish}`;
+export function buildInventoryId(size: ParsedSize, supplier: Supplier, finish?: string): string {
+  let finishCode: string;
+  if (finish) {
+    // Use explicit finish - add trailing underscores to normalize length
+    finishCode = finish;
+  } else {
+    // Use supplier default
+    finishCode = FINISH_CODES[supplier] || FINISH_CODES['wuu-jing'];
+  }
+  return `${size.thicknessFormatted}-${size.width}__-${size.length}__-304/304L-${finishCode}`;
 }
 
 /**
- * Build lot/serial number from PO number and bundle number
- * Format: 00{poNumber}-{bundleNumber padded to 2 digits}
+ * Build lot/serial number from PO number and bundle/item identifier
+ * For Wuu Jing: Use bundle number directly (e.g., "001837-01")
+ * For Yuen Chang: Use item identifier directly (e.g., "WM006")
  */
-export function buildLotSerialNbr(poNumber: string, bundleNumber: string | number): string {
-  const po = poNumber.replace(/\D/g, '').padStart(4, '0');
-  const bundle = String(bundleNumber).replace(/\D/g, '').padStart(2, '0');
-  return `00${po}-${bundle}`;
+export function buildLotSerialNbr(poNumber: string, bundleOrItem: string | number, _supplier?: Supplier): string {
+  const bundleStr = String(bundleOrItem);
+
+  // If it's already a full bundle number (like "001837-01"), use as-is
+  if (bundleStr.match(/^\d{6}-\d{2}$/)) {
+    return bundleStr;
+  }
+
+  // If it's an item code (like "WM006"), use as-is
+  if (bundleStr.match(/^[A-Z]{2}\d+$/i)) {
+    return bundleStr;
+  }
+
+  // Otherwise, build from PO number and bundle number
+  const po = poNumber.replace(/\D/g, '').padStart(6, '0');
+  const bundle = bundleStr.replace(/\D/g, '').padStart(2, '0');
+  return `${po}-${bundle}`;
+}
+
+/**
+ * Extract warehouse from destination in packing list
+ * Maps destination cities to warehouse codes
+ */
+export function extractWarehouse(text: string): string {
+  const lowerText = text.toLowerCase();
+
+  // Check for destination patterns
+  if (lowerText.includes('baltimore')) return 'Baltimore';
+  if (lowerText.includes('los angeles') || lowerText.includes('la,') || lowerText.includes('to: la')) return 'LA';
+  if (lowerText.includes('houston')) return 'Houston';
+
+  // Default warehouse
+  return 'LA';
 }
 
 /**

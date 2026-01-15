@@ -9,6 +9,8 @@ export interface PackingListItem {
   grossWeightLbs: number;
   containerQtyLbs: number;
   rawSize: string;
+  warehouse?: string;
+  finish?: string;
 }
 
 export interface ParsedPackingList {
@@ -18,6 +20,7 @@ export interface ParsedPackingList {
   items: PackingListItem[];
   totalGrossWeightLbs: number;
   totalNetWeightLbs: number;
+  warehouse?: string;
 }
 
 export interface UploadedFile {

@@ -37,6 +37,8 @@ export const GAUGE_TO_DECIMAL: Record<string, number> = {
   '16': 0.060,
   '14GA': 0.075,
   '14': 0.075,
+  '13GA': 0.090,
+  '13': 0.090,
   '12GA': 0.105,
   '12': 0.105,
   '11GA': 0.120,
