@@ -51,6 +51,39 @@ export function scorePageAsPackingList(text: string): number {
     score += 15;
   }
 
+  // Wuu Jing specific patterns (+20 points each)
+  // Bundle number pattern: 001812-01, 001837-02, etc.
+  const bundlePattern = /\d{6}-\d{2}/g;
+  const bundleMatches = text.match(bundlePattern);
+  if (bundleMatches && bundleMatches.length >= 3) {
+    score += 30; // Multiple bundle numbers strongly indicates packing list
+  } else if (bundleMatches && bundleMatches.length >= 1) {
+    score += 15;
+  }
+
+  // Size format pattern: 4.76*1525MM*3660MM or similar
+  const sizePattern = /\d+\.?\d*\s*\*\s*\d+\s*MM\s*\*\s*\d+\s*MM/gi;
+  const sizeMatches = text.match(sizePattern);
+  if (sizeMatches && sizeMatches.length >= 3) {
+    score += 30; // Multiple size patterns strongly indicates packing list
+  } else if (sizeMatches && sizeMatches.length >= 1) {
+    score += 15;
+  }
+
+  // Imperial dimensions in parentheses: (3/16"*60"*144")
+  const imperialPattern = /\(\d+\/\d+[""']?\s*\*\s*\d+[""']?\s*\*\s*\d+[""']?\)/g;
+  const imperialMatches = text.match(imperialPattern);
+  if (imperialMatches && imperialMatches.length >= 1) {
+    score += 20;
+  }
+
+  // Weight patterns (X.XXX format typical of MT weights)
+  const weightPattern = /\b\d+\.\d{3}\b/g;
+  const weightMatches = text.match(weightPattern);
+  if (weightMatches && weightMatches.length >= 5) {
+    score += 15;
+  }
+
   return score;
 }
 

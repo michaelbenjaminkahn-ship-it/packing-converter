@@ -21,12 +21,12 @@ export interface OcrProgress {
 const MIN_CONFIDENCE_THRESHOLD = 70;
 
 /**
- * Convert a PDF page to an image data URL
+ * Convert a PDF page to an image data URL with preprocessing for better OCR
  */
 async function pdfPageToImage(
   pdf: pdfjsLib.PDFDocumentProxy,
   pageNum: number,
-  scale: number = 2.0 // Higher scale = better OCR accuracy
+  scale: number = 3.0 // Higher scale = better OCR accuracy (increased from 2.0)
 ): Promise<string> {
   const page = await pdf.getPage(pageNum);
   const viewport = page.getViewport({ scale });
@@ -41,11 +41,47 @@ async function pdfPageToImage(
   canvas.width = viewport.width;
   canvas.height = viewport.height;
 
+  // Set white background for better OCR contrast
+  context.fillStyle = 'white';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
   // Render PDF page to canvas
   await page.render({
     canvasContext: context,
     viewport,
   }).promise;
+
+  // Apply image preprocessing to improve OCR quality
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+
+  // Increase contrast and convert to grayscale with thresholding
+  for (let i = 0; i < data.length; i += 4) {
+    // Convert to grayscale
+    const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+
+    // Apply contrast enhancement
+    const contrast = 1.3; // Increase contrast
+    const factor = (259 * (contrast * 100 + 255)) / (255 * (259 - contrast * 100));
+    let enhanced = factor * (gray - 128) + 128;
+
+    // Clamp values
+    enhanced = Math.max(0, Math.min(255, enhanced));
+
+    // Apply mild thresholding to sharpen text
+    if (enhanced < 180) {
+      enhanced = Math.max(0, enhanced - 30); // Darken dark pixels
+    } else {
+      enhanced = Math.min(255, enhanced + 30); // Lighten light pixels
+    }
+
+    data[i] = enhanced;     // R
+    data[i + 1] = enhanced; // G
+    data[i + 2] = enhanced; // B
+    // Alpha stays the same
+  }
+
+  context.putImageData(imageData, 0, 0);
 
   // Convert to image data URL
   return canvas.toDataURL('image/png');
