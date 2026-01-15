@@ -133,23 +133,30 @@ function findPackingListSheet(workbook: XLSX.WorkBook): { name: string; data: un
  * Looks for patterns like "ORDER NO.: 001772" or "EXCEL ORDER # 001726"
  */
 function extractPoFromExcel(data: unknown[][]): string {
-  // Search first 15 rows for PO pattern
-  for (let i = 0; i < Math.min(data.length, 15); i++) {
+  // Search all rows for PO patterns (EXCEL ORDER # can appear in data rows for YC)
+  for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
 
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
 
-    // Pattern: "ORDER NO.: 001772" or "ORDER NO: 001772"
-    const orderNoMatch = rowText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*(\d{4,6})/i);
-    if (orderNoMatch) {
-      return orderNoMatch[1];
-    }
-
-    // Pattern: "EXCEL ORDER # 001726"
-    const excelOrderMatch = rowText.match(/EXCEL\s*ORDER\s*#?\s*(\d{4,6})/i);
+    // Pattern: "EXCEL ORDER # 001726" or "EXCEL ORDER #001726" (Yuen Chang format)
+    // This appears in data rows under each container section
+    const excelOrderMatch = rowText.match(/EXCEL\s*ORDER\s*#?\s*:?\s*0*(\d{4,6})/i);
     if (excelOrderMatch) {
       return excelOrderMatch[1];
+    }
+
+    // Pattern: "EXCEL METALS LLC ORDER NO.: 001837" (Wuu Jing format)
+    const excelMetalsMatch = rowText.match(/EXCEL\s*METALS.*ORDER\s*NO\.?\s*:?\s*0*(\d{4,6})/i);
+    if (excelMetalsMatch) {
+      return excelMetalsMatch[1];
+    }
+
+    // Pattern: "ORDER NO.: 001772" or "ORDER NO: 001772"
+    const orderNoMatch = rowText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*0*(\d{4,6})/i);
+    if (orderNoMatch) {
+      return orderNoMatch[1];
     }
 
     // Pattern: "PO# 1234" or "PO #1234"
@@ -174,8 +181,20 @@ function extractPoFromExcel(data: unknown[][]): string {
         // Check if this cell is a 4-6 digit number (might be stored as number type)
         const numMatch = String(cellText).match(/^0*(\d{4,6})$/);
         if (numMatch) {
-          return numMatch[1].padStart(6, '0').replace(/^0+/, '') || numMatch[1];
+          // Remove leading zeros
+          return numMatch[1].replace(/^0+/, '') || numMatch[1];
         }
+      }
+    }
+
+    // Also check each cell individually for patterns like "001837" next to "ORDER NO"
+    for (let j = 0; j < row.length; j++) {
+      const cellText = String(row[j] ?? '');
+
+      // Check if this specific cell has the full pattern
+      const cellMatch = cellText.match(/ORDER\s*NO\.?\s*:?\s*0*(\d{4,6})/i);
+      if (cellMatch) {
+        return cellMatch[1];
       }
     }
   }
