@@ -134,6 +134,40 @@ function extractPoFromExcel(data: unknown[][]): string {
     if (poMatch) {
       return poMatch[1];
     }
+
+    // Excel stores number in separate cell - look for "ORDER NO" text followed by number in next cells
+    // Check if any cell contains "ORDER NO" pattern
+    let foundOrderNoCell = false;
+    for (let j = 0; j < row.length; j++) {
+      const cellText = String(row[j] ?? '');
+
+      // Check if this cell contains "ORDER NO" (with or without the number)
+      if (/ORDER\s*NO\.?\s*:?\s*$/i.test(cellText) || /ORDER\s*NO\.?\s*:?\s*#?\s*$/i.test(cellText)) {
+        foundOrderNoCell = true;
+      }
+
+      // If previous cells had "ORDER NO", look for a standalone number
+      if (foundOrderNoCell) {
+        // Check if this cell is a 4-6 digit number (might be stored as number type)
+        const numMatch = String(cellText).match(/^0*(\d{4,6})$/);
+        if (numMatch) {
+          return numMatch[1].padStart(6, '0').replace(/^0+/, '') || numMatch[1];
+        }
+      }
+    }
+  }
+
+  // Fallback: try to extract from bundle numbers (e.g., 001772-01 -> PO 1772)
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    if (!row || !Array.isArray(row)) continue;
+
+    const rowText = row.map(cell => String(cell ?? '')).join(' ');
+    const bundleMatch = rowText.match(/(\d{6})-\d{2}/);
+    if (bundleMatch) {
+      // Remove leading zeros: 001772 -> 1772
+      return bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
+    }
   }
 
   return '';
