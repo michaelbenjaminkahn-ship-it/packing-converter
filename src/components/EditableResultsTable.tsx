@@ -74,6 +74,15 @@ export function EditableResultsTable({
       case 'heatNumber':
         item.heatNumber = editValue;
         break;
+      case 'orderQtyOverride':
+        item.orderQtyOverride = parseFloat(editValue) || undefined;
+        break;
+      case 'unitCostOverride':
+        item.unitCostOverride = parseFloat(editValue) || undefined;
+        break;
+      case 'warehouse':
+        item.warehouse = editValue;
+        break;
     }
 
     updatedItems[row] = item;
@@ -327,14 +336,19 @@ export function EditableResultsTable({
           <tbody className="bg-white divide-y divide-gray-200">
             {result.items.map((item, index) => {
               // Calculate OrderQty: sum of containerQtyLbs for all items with same inventoryId (SKU)
-              const orderQty = result.items
+              const calculatedOrderQty = result.items
                 .filter(i => i.inventoryId === item.inventoryId)
                 .reduce((sum, i) => sum + i.containerQtyLbs, 0);
+              const orderQty = item.orderQtyOverride ?? calculatedOrderQty;
 
               // Unit cost: containerQtyLbs / pieceCount (weight per piece)
-              const unitCost = item.pieceCount > 0
+              const calculatedUnitCost = item.pieceCount > 0
                 ? Math.round((item.containerQtyLbs / item.pieceCount) * 100) / 100
                 : 0;
+              const unitCost = item.unitCostOverride ?? calculatedUnitCost;
+
+              // Warehouse: use item-level override or default
+              const itemWarehouse = item.warehouse || warehouse;
 
               return (
                 <tr key={`${item.lineNumber}-${index}`} className="hover:bg-gray-50">
@@ -353,20 +367,20 @@ export function EditableResultsTable({
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
                     {renderEditableCell(index, 'grossWeightLbs', item.grossWeightLbs, true)}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
-                    {orderQty.toLocaleString()}
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                    {renderEditableCell(index, 'orderQtyOverride', orderQty, true)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
                     {renderEditableCell(index, 'containerQtyLbs', item.containerQtyLbs, true)}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 text-right font-mono">
-                    {unitCost.toFixed(2)}
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                    {renderEditableCell(index, 'unitCostOverride', unitCost, true)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
                     {renderEditableCell(index, 'heatNumber', item.heatNumber || '')}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-700">
-                    {warehouse}
+                    {renderEditableCell(index, 'warehouse', itemWarehouse)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500 text-center">
                     LB
