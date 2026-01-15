@@ -238,6 +238,13 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
   const cleanText = text
     .replace(/[oO](?=\d)/g, '0') // O before digit -> 0
     .replace(/(?<=\d)[lI]/g, '1') // l or I after digit -> 1
+    .replace(/(?<=\d)[sS](?=\d)/g, '5') // S between digits -> 5
+    .replace(/(?<=\d)[Bb](?=\d)/g, '8') // B between digits -> 8
+    .replace(/[|](?=\d)/g, '1') // | before digit -> 1
+    .replace(/(?<=\d)[|]/g, '1') // | after digit -> 1
+    .replace(/MM[^A-Za-z0-9]/gi, 'MM ') // Fix MM followed by punctuation
+    .replace(/\bMlvl\b/gi, 'MM') // Common OCR for MM
+    .replace(/\bMIVI\b/gi, 'MM') // Another common OCR for MM
     .replace(/\s+/g, ' '); // normalize whitespace
 
   // Find all size patterns - more flexible matching for OCR
@@ -247,6 +254,10 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
     /(\d+\.?\d*)\s*[*×xX]\s*(\d+)\s*MM\s*[*×xX]\s*(\d+)\s*MM\s*\(([^)]+)\)/gi,
     // Without MM labels: 4.76*1525*3660(3/16"*60"*144")
     /(\d+\.?\d*)\s*[*×xX]\s*(\d{3,4})\s*[*×xX]\s*(\d{3,4})\s*\(([^)]+)\)/gi,
+    // OCR may add spaces: 4.76 * 1525 MM * 3660 MM ( 3/16" * 60" * 144" )
+    /(\d+\.?\d*)\s*[*×xX]\s*(\d+)\s*M\s*M\s*[*×xX]\s*(\d+)\s*M\s*M\s*\(\s*([^)]+)\s*\)/gi,
+    // OCR friendly - MM might be misread as MN, NN, etc.
+    /(\d+\.?\d*)\s*[*×xX]\s*(\d+)\s*[MN][MN]\s*[*×xX]\s*(\d+)\s*[MN][MN]\s*\(([^)]+)\)/gi,
   ];
 
   // Find bundle number pattern: 001812-01, 001812-02, etc.
@@ -337,6 +348,132 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
     }
 
     if (items.length > 0) break; // Found matches with this pattern
+  }
+
+  // If still no items, try bundle-anchored parsing
+  if (items.length === 0 && bundleMatches.length > 0) {
+    return parseWuuJingByBundles(cleanText, poNumber, finish, warehouse, bundleMatches);
+  }
+
+  return items;
+}
+
+/**
+ * Fallback Wuu Jing parsing - uses bundle numbers as anchors
+ * For when OCR quality is too low to reliably extract size patterns
+ */
+function parseWuuJingByBundles(
+  text: string,
+  _poNumber: string,
+  finish: string,
+  warehouse: string,
+  bundleMatches: RegExpMatchArray[]
+): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
+  // Try to find imperial dimensions anywhere in the text
+  // Pattern: (3/16"*60"*144") or 3/16" * 60" * 144"
+  const imperialPattern = /(\d+\/\d+|\d+\.?\d*)[""']?\s*[*×xX]\s*(\d+)[""']?\s*[*×xX]\s*(\d+)/g;
+  const imperialMatches = [...text.matchAll(imperialPattern)];
+
+  // Find weight patterns
+  const weightPattern = /(\d+\.\d{2,3})/g;
+  const weightMatches = [...text.matchAll(weightPattern)]
+    .map(m => ({ value: parseFloat(m[1]), index: m.index! }))
+    .filter(w => w.value >= 0.5 && w.value <= 50);
+
+  // Process each bundle number as an anchor
+  for (let i = 0; i < bundleMatches.length; i++) {
+    const bundleMatch = bundleMatches[i];
+    const bundleNo = `${bundleMatch[1]}-${bundleMatch[2]}`;
+    const bundleIndex = bundleMatch.index!;
+
+    // Try to find an imperial dimension near this bundle (before it)
+    // Look back up to 300 chars
+    const lookbackStart = Math.max(0, bundleIndex - 300);
+    const lookbackText = text.substring(lookbackStart, bundleIndex);
+
+    let size = null;
+    const localImperial = lookbackText.match(/(\d+\/\d+|\d+\.?\d*)[""']?\s*[*×xX]\s*(\d+)[""']?\s*[*×xX]\s*(\d+)/);
+
+    if (localImperial) {
+      const thicknessStr = localImperial[1];
+      let thickness: number;
+      if (thicknessStr.includes('/')) {
+        const [num, denom] = thicknessStr.split('/').map(Number);
+        thickness = num / denom;
+      } else {
+        thickness = parseFloat(thicknessStr);
+      }
+      const width = parseFloat(localImperial[2]);
+      const length = parseFloat(localImperial[3]);
+
+      if (!isNaN(thickness) && !isNaN(width) && !isNaN(length)) {
+        size = {
+          thickness,
+          width,
+          length,
+          thicknessFormatted: formatThickness(thickness),
+        };
+      }
+    }
+
+    // If we couldn't find a local size, try to use the nearest from all matches
+    if (!size && imperialMatches.length > 0) {
+      // Find closest imperial match before this bundle
+      const nearestImperial = imperialMatches
+        .filter(m => m.index! < bundleIndex)
+        .pop();
+
+      if (nearestImperial) {
+        const thicknessStr = nearestImperial[1];
+        let thickness: number;
+        if (thicknessStr.includes('/')) {
+          const [num, denom] = thicknessStr.split('/').map(Number);
+          thickness = num / denom;
+        } else {
+          thickness = parseFloat(thicknessStr);
+        }
+        const width = parseFloat(nearestImperial[2]);
+        const length = parseFloat(nearestImperial[3]);
+
+        if (!isNaN(thickness) && !isNaN(width) && !isNaN(length)) {
+          size = {
+            thickness,
+            width,
+            length,
+            thicknessFormatted: formatThickness(thickness),
+          };
+        }
+      }
+    }
+
+    if (!size) continue; // Skip if we couldn't find any size
+
+    // Find piece count - look for small number (1-20) before the bundle
+    const pcMatch = lookbackText.match(/\b(\d{1,2})\s*$/);
+    const pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
+
+    // Find weights after the bundle number (within 100 chars)
+    const weightsAfter = weightMatches.filter(w =>
+      w.index > bundleIndex && w.index < bundleIndex + 100
+    );
+
+    const netWeightMT = weightsAfter.length >= 2 ? weightsAfter[weightsAfter.length - 2].value : 0;
+    const grossWeightMT = weightsAfter.length >= 1 ? weightsAfter[weightsAfter.length - 1].value : netWeightMT;
+
+    items.push({
+      lineNumber: i + 1,
+      inventoryId: buildInventoryId(size, 'wuu-jing', finish),
+      lotSerialNbr: bundleNo,
+      pieceCount: pc > 0 && pc <= 20 ? pc : 1,
+      heatNumber: '',
+      grossWeightLbs: mtToLbs(grossWeightMT),
+      containerQtyLbs: mtToLbs(netWeightMT),
+      rawSize: `${size.thicknessFormatted}"*${size.width}"*${size.length}"`,
+      warehouse,
+      finish,
+    });
   }
 
   return items;

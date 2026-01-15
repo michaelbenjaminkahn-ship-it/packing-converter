@@ -76,6 +76,12 @@ export const PACKING_LIST_INDICATORS = [
   'bundle', 'bundle no', 'item',
   'weight', 'net weight', 'gross weight', 'n\'weight', 'g\'weight',
   'heat', 'heat no', 'coil',
+  // Wuu Jing specific patterns
+  'container no', 'product no', 'n\'wt', 'g\'wt',
+  // OCR-friendly variations (may OCR as these)
+  'nweight', 'gweight', 'n weight', 'g weight',
+  // Size pattern indicators
+  'mm*', '*mm', '60"', '48"', '120"', '144"',
 ];
 
 // Title bonus keywords (+30 points)
