@@ -8,30 +8,24 @@ import { VENDOR_CODES } from './constants';
  * Parse an Excel file and extract packing list data
  */
 export async function parseExcel(file: File, poNumber: string): Promise<ParsedPackingList> {
-  console.log('[parseExcel] Called with poNumber parameter:', JSON.stringify(poNumber));
   const arrayBuffer = await file.arrayBuffer();
   const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
   // Search ALL sheets for PO number and warehouse (they might be on invoice sheet)
-  console.log('[parseExcel] Workbook sheets:', workbook.SheetNames);
   let extractedPo = '';
   let extractedWarehouse = '';
   for (const sheetName of workbook.SheetNames) {
-    console.log('[parseExcel] Scanning sheet:', sheetName);
     const sheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
-    console.log('[parseExcel] Sheet', sheetName, 'has', data.length, 'rows');
 
     if (!extractedPo) {
       extractedPo = extractPoFromExcel(data);
-      console.log('[parseExcel] PO from', sheetName, ':', extractedPo || '(empty)');
     }
     if (!extractedWarehouse) {
       extractedWarehouse = extractWarehouseFromExcel(data);
     }
     if (extractedPo && extractedWarehouse) break;
   }
-  console.log('[parseExcel] Final extracted PO:', extractedPo || 'NONE');
 
   // Find the sheet most likely to be a packing list
   const bestSheet = findPackingListSheet(workbook);
@@ -49,7 +43,6 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   // Use provided PO (if valid), or extracted from any sheet
   const validPoNumber = poNumber && poNumber !== 'UNKNOWN' ? poNumber : '';
   const finalPoNumber = validPoNumber || extractedPo || 'UNKNOWN';
-  console.log('[parseExcel] finalPoNumber decision: poNumber param=', JSON.stringify(poNumber), 'extractedPo=', JSON.stringify(extractedPo), '-> using:', finalPoNumber);
 
   // Use warehouse from best sheet, or from any sheet if not found
   const sheetWarehouse = extractWarehouseFromExcel(bestSheet.data);
@@ -157,19 +150,7 @@ function findPackingListSheet(workbook: XLSX.WorkBook): { name: string; data: un
  * Looks for patterns like "ORDER NO.: 001772" or "EXCEL ORDER # 001726"
  */
 function extractPoFromExcel(data: unknown[][]): string {
-  console.log('[PO Extract] Starting extraction, total rows:', data.length);
-
-  // Log first 20 rows for debugging
-  console.log('[PO Extract] First 20 rows of data:');
-  for (let i = 0; i < Math.min(data.length, 20); i++) {
-    const row = data[i];
-    if (row && Array.isArray(row)) {
-      console.log(`  Row ${i}:`, row.map(c => `[${typeof c}:${String(c ?? '')}]`).join(' | '));
-    }
-  }
-
   // Search all rows for ORDER patterns
-  console.log('[PO Extract] Searching for ORDER patterns...');
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
@@ -192,18 +173,15 @@ function extractPoFromExcel(data: unknown[][]): string {
         // - "ORDER # 1726"
         const fullMatch = cellStr.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*0*(\d{3,6})/i);
         if (fullMatch) {
-          console.log('[PO Extract] Found ORDER pattern with number in cell at row', i, 'col', j, ':', cellStr, '-> PO:', fullMatch[1]);
           return fullMatch[1];
         }
 
         // Cell has ORDER but no number - check adjacent cells
-        console.log('[PO Extract] Found ORDER cell at row', i, 'col', j, ':', cellStr, '- checking adjacent cells');
         for (let k = j + 1; k < Math.min(j + 5, row.length); k++) {
           const nextCell = row[k];
-          const nextType = typeof nextCell;
           let numValue: string;
 
-          if (nextType === 'number') {
+          if (typeof nextCell === 'number') {
             // Excel stores "001772" as number 1772
             numValue = String(nextCell);
           } else {
@@ -211,11 +189,8 @@ function extractPoFromExcel(data: unknown[][]): string {
             numValue = String(nextCell ?? '').trim().replace(/^0+/, '');
           }
 
-          console.log('[PO Extract]   Cell', k, ':', nextCell, '(type:', nextType, ') -> numValue:', numValue);
-
           // Check if it's a valid PO number (3-6 digits)
           if (/^\d{3,6}$/.test(numValue)) {
-            console.log('[PO Extract] Found PO in adjacent cell:', numValue);
             return numValue;
           }
         }
@@ -228,13 +203,11 @@ function extractPoFromExcel(data: unknown[][]): string {
     // Flexible pattern that handles various formats
     const flexMatch = rowText.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*0*(\d{3,6})/i);
     if (flexMatch) {
-      console.log('[PO Extract] Found ORDER pattern in joined row', i, ':', rowText.substring(0, 100), '-> PO:', flexMatch[1]);
       return flexMatch[1];
     }
   }
 
   // SECOND: Try to extract from bundle numbers in data rows (e.g., 001772-01 -> PO 1772)
-  console.log('[PO Extract] No ORDER pattern found, trying bundle patterns...');
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
@@ -245,13 +218,11 @@ function extractPoFromExcel(data: unknown[][]): string {
       const bundleMatch = cellStr.match(/(\d{6})-\d{2}/);
       if (bundleMatch) {
         const po = bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
-        console.log('[PO Extract] Found bundle pattern:', cellStr, '-> PO:', po);
         return po;
       }
     }
   }
 
-  console.log('[PO Extract] No patterns found, returning empty string');
   return '';
 }
 
