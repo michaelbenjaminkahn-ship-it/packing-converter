@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import { PackingListItem, ParsedPackingList, Supplier } from '../types';
 import { detectSupplier, scorePageAsPackingList } from './detection';
-import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs } from './conversion';
+import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse } from './conversion';
 import { VENDOR_CODES } from './constants';
 
 /**
@@ -12,29 +12,29 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
   // Find the sheet most likely to be a packing list
-  let bestSheet: { name: string; score: number; data: unknown[][] } | null = null;
+  const bestSheet = findPackingListSheet(workbook);
 
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
-    const text = data.map(row => (row as unknown[]).join(' ')).join('\n');
-    const score = scorePageAsPackingList(text);
-
-    if (!bestSheet || score > bestSheet.score) {
-      bestSheet = { name: sheetName, score, data: data as unknown[][] };
-    }
-  }
-
-  if (!bestSheet || bestSheet.score < 30) {
+  if (!bestSheet) {
     throw new Error('Could not identify packing list sheet in Excel file');
   }
 
-  // Detect supplier from sheet content
+  // Convert sheet to text for detection
   const sheetText = bestSheet.data.map(row => row.join(' ')).join('\n');
+
+  // Detect supplier from sheet content
   const supplier = detectSupplier(sheetText);
 
-  // Parse the data
-  const items = parseExcelData(bestSheet.data, supplier, poNumber);
+  // Extract PO number from sheet if not provided
+  const extractedPo = extractPoFromExcel(bestSheet.data);
+  const finalPoNumber = poNumber || extractedPo || 'UNKNOWN';
+
+  // Extract warehouse/destination from sheet
+  const warehouse = extractWarehouseFromExcel(bestSheet.data);
+
+  // Parse the data based on supplier
+  const items = supplier === 'yuen-chang'
+    ? parseYuenChangExcel(bestSheet.data, finalPoNumber)
+    : parseWuuJingExcel(bestSheet.data, finalPoNumber);
 
   if (items.length === 0) {
     throw new Error('Could not parse any items from packing list');
@@ -47,79 +47,191 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   return {
     supplier,
     vendorCode: VENDOR_CODES[supplier] || '',
-    poNumber,
+    poNumber: finalPoNumber,
     items,
     totalGrossWeightLbs,
     totalNetWeightLbs,
+    warehouse,
   };
 }
 
 /**
- * Parse Excel data rows into PackingListItems
+ * Find the best sheet for packing list data
+ * Prioritizes sheets named "PACKING" or similar
  */
-function parseExcelData(
-  data: unknown[][],
-  supplier: Supplier,
-  poNumber: string
-): PackingListItem[] {
+function findPackingListSheet(workbook: XLSX.WorkBook): { name: string; data: unknown[][] } | null {
+  // Priority 1: Look for sheet named "PACKING" or "PACKING LIST"
+  const packingSheetNames = ['packing', 'packing list', 'packing lists', 'packinglist'];
+  for (const sheetName of workbook.SheetNames) {
+    if (packingSheetNames.includes(sheetName.toLowerCase().trim())) {
+      const sheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
+      return { name: sheetName, data };
+    }
+  }
+
+  // Priority 2: Score each sheet and pick the best
+  let bestSheet: { name: string; score: number; data: unknown[][] } | null = null;
+
+  for (const sheetName of workbook.SheetNames) {
+    // Skip obvious non-packing sheets
+    const lowerName = sheetName.toLowerCase();
+    if (lowerName === 'invoice' || lowerName === 'mark' || lowerName === 'marks') {
+      continue;
+    }
+
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
+    const text = data.map(row => (row as unknown[]).join(' ')).join('\n');
+    const score = scorePageAsPackingList(text);
+
+    if (!bestSheet || score > bestSheet.score) {
+      bestSheet = { name: sheetName, score, data };
+    }
+  }
+
+  if (bestSheet && bestSheet.score >= 20) {
+    return { name: bestSheet.name, data: bestSheet.data };
+  }
+
+  // Fallback: return first sheet
+  if (workbook.SheetNames.length > 0) {
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
+    return { name: sheetName, data };
+  }
+
+  return null;
+}
+
+/**
+ * Extract PO number from Excel header rows
+ * Looks for patterns like "ORDER NO.: 001772" or "EXCEL ORDER # 001726"
+ */
+function extractPoFromExcel(data: unknown[][]): string {
+  // Search first 15 rows for PO pattern
+  for (let i = 0; i < Math.min(data.length, 15); i++) {
+    const row = data[i];
+    if (!row) continue;
+
+    const rowText = row.map(cell => String(cell || '')).join(' ');
+
+    // Pattern: "ORDER NO.: 001772" or "ORDER NO: 001772"
+    const orderNoMatch = rowText.match(/ORDER\s*NO\.?\s*:?\s*#?\s*(\d{4,6})/i);
+    if (orderNoMatch) {
+      return orderNoMatch[1];
+    }
+
+    // Pattern: "EXCEL ORDER # 001726"
+    const excelOrderMatch = rowText.match(/EXCEL\s*ORDER\s*#?\s*(\d{4,6})/i);
+    if (excelOrderMatch) {
+      return excelOrderMatch[1];
+    }
+
+    // Pattern: "PO# 1234" or "PO #1234"
+    const poMatch = rowText.match(/PO\s*#?\s*:?\s*(\d{4,6})/i);
+    if (poMatch) {
+      return poMatch[1];
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Extract warehouse/destination from Excel header rows
+ */
+function extractWarehouseFromExcel(data: unknown[][]): string {
+  // Search first 15 rows for destination
+  for (let i = 0; i < Math.min(data.length, 15); i++) {
+    const row = data[i];
+    if (!row) continue;
+
+    const rowText = row.map(cell => String(cell || '')).join(' ');
+
+    // Use the existing extractWarehouse function
+    const warehouse = extractWarehouse(rowText);
+    if (warehouse !== 'LA') { // LA is the default, so if we found something specific
+      return warehouse;
+    }
+  }
+
+  return 'LA';
+}
+
+/**
+ * Parse Wuu Jing Excel format
+ * Columns: NO, SIZE, PC, BUNDLE NO., PRODUCT NO., CONTAINER NO., N'WEIGHT (MT), G'WEIGHT (MT)
+ */
+function parseWuuJingExcel(data: unknown[][], poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
 
   // Find header row
-  const headerRowIndex = findHeaderRow(data);
+  const headerRowIndex = findHeaderRow(data, ['size', 'bundle', 'weight']);
   if (headerRowIndex === -1) {
-    return parseExcelWithoutHeaders(data, supplier, poNumber);
+    return parseExcelWithoutHeaders(data, 'wuu-jing', poNumber);
   }
 
   const headers = data[headerRowIndex].map(h => String(h || '').toLowerCase().trim());
 
-  // Map column indices
+  // Map column indices for Wuu Jing
   const colMap = {
-    no: findColumnIndex(headers, ['no', 'no.', 'item', '#']),
-    size: findColumnIndex(headers, ['size', 'specification', 'spec']),
-    pc: findColumnIndex(headers, ['pc', 'pcs', 'pieces', 'qty', 'quantity']),
-    bundleNo: findColumnIndex(headers, ['bundle no', 'bundle no.', 'bundle', 'lot']),
-    netWeight: findColumnIndex(headers, ['n\'weight', 'net weight', 'net wt', 'n.weight', 'n\'wt']),
-    grossWeight: findColumnIndex(headers, ['g\'weight', 'gross weight', 'gross wt', 'g.weight', 'g\'wt']),
-    heatNo: findColumnIndex(headers, ['heat no', 'heat no.', 'heat', 'coil no']),
+    no: findColumnIndex(headers, ['no', 'no.']),
+    size: findColumnIndex(headers, ['size', 'specification']),
+    pc: findColumnIndex(headers, ['pc', 'pcs']),
+    bundleNo: findColumnIndex(headers, ['bundle no', 'bundle no.', 'bundle']),
+    netWeight: findColumnIndex(headers, ['n\'weight', 'nweight', 'n weight', 'net']),
+    grossWeight: findColumnIndex(headers, ['g\'weight', 'gweight', 'g weight', 'gross']),
   };
+
+  // Extract finish from header area (before the data table)
+  const finish = extractFinishFromExcel(data, headerRowIndex);
 
   // Parse data rows
   for (let i = headerRowIndex + 1; i < data.length; i++) {
     const row = data[i];
     if (!row || row.length === 0) continue;
 
+    // Skip total rows
+    const firstCell = String(row[0] || '').toLowerCase();
+    if (firstCell.includes('total') || firstCell.includes('subtotal')) continue;
+
     // Get size string
     const sizeStr = colMap.size >= 0 ? String(row[colMap.size] || '') : '';
-    if (!sizeStr) continue;
+    if (!sizeStr || !sizeStr.includes('*')) continue;
 
-    const size = parseSize(sizeStr, supplier);
+    const size = parseSize(sizeStr, 'wuu-jing');
     if (!size) continue;
 
     const lineNo = colMap.no >= 0 ? parseInt(String(row[colMap.no]), 10) : items.length + 1;
     const pc = colMap.pc >= 0 ? parseInt(String(row[colMap.pc]), 10) : 1;
-    const bundleNo = colMap.bundleNo >= 0 ? String(row[colMap.bundleNo]) : String(lineNo);
+    const bundleNo = colMap.bundleNo >= 0 ? String(row[colMap.bundleNo] || '') : '';
     let netWeight = colMap.netWeight >= 0 ? parseFloat(String(row[colMap.netWeight])) : 0;
     let grossWeight = colMap.grossWeight >= 0 ? parseFloat(String(row[colMap.grossWeight])) : netWeight;
-    const heatNo = colMap.heatNo >= 0 ? String(row[colMap.heatNo] || '') : '';
 
-    // Convert weights if supplier uses MT
-    if (supplier === 'wuu-jing') {
-      netWeight = mtToLbs(netWeight);
-      grossWeight = mtToLbs(grossWeight);
-    } else {
-      netWeight = Math.round(netWeight);
-      grossWeight = Math.round(grossWeight);
-    }
+    // Skip if no valid data
+    if (isNaN(lineNo) && !bundleNo) continue;
+
+    // Convert MT to LBS
+    netWeight = mtToLbs(netWeight);
+    grossWeight = mtToLbs(grossWeight);
+
+    // Use bundle number directly if it's in correct format, otherwise build it
+    const lotSerial = bundleNo.match(/^\d{6}-\d{2}$/)
+      ? bundleNo
+      : buildLotSerialNbr(poNumber, bundleNo || String(lineNo));
 
     items.push({
       lineNumber: items.length + 1,
-      inventoryId: buildInventoryId(size, supplier),
-      lotSerialNbr: buildLotSerialNbr(poNumber, bundleNo),
+      inventoryId: buildInventoryId(size, 'wuu-jing', finish),
+      lotSerialNbr: lotSerial,
       pieceCount: pc || 1,
-      heatNumber: heatNo,
+      heatNumber: '',
       grossWeightLbs: grossWeight,
       containerQtyLbs: netWeight,
       rawSize: sizeStr,
+      finish,
     });
   }
 
@@ -127,17 +239,137 @@ function parseExcelData(
 }
 
 /**
+ * Parse Yuen Chang Excel format
+ * Columns: NO., Item, SIZE (GA), COIL NO., Heat NO., PCS, NETWEIGHT (lbs), GROSSWEIGHT (lbs)
+ */
+function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
+  // Find header row
+  const headerRowIndex = findHeaderRow(data, ['size', 'item', 'heat', 'pcs']);
+  if (headerRowIndex === -1) {
+    return parseExcelWithoutHeaders(data, 'yuen-chang', poNumber);
+  }
+
+  const headers = data[headerRowIndex].map(h => String(h || '').toLowerCase().trim());
+
+  // Map column indices for Yuen Chang
+  const colMap = {
+    no: findColumnIndex(headers, ['no', 'no.']),
+    item: findColumnIndex(headers, ['item']),
+    size: findColumnIndex(headers, ['size']),
+    coilNo: findColumnIndex(headers, ['coil no', 'coil no.']),
+    heatNo: findColumnIndex(headers, ['heat no', 'heat no.', 'heat']),
+    pcs: findColumnIndex(headers, ['pcs', 'pc', 'qty']),
+    netWeight: findColumnIndex(headers, ['netweight', 'net weight', 'net']),
+    grossWeight: findColumnIndex(headers, ['grossweight', 'gross weight', 'gross']),
+  };
+
+  // Track current finish (can change with section headers)
+  let currentFinish = '2B';
+
+  // Parse data rows
+  for (let i = headerRowIndex + 1; i < data.length; i++) {
+    const row = data[i];
+    if (!row || row.length === 0) continue;
+
+    const rowText = row.map(cell => String(cell || '')).join(' ');
+
+    // Check for section headers that indicate finish changes
+    if (rowText.includes('304/304L')) {
+      if (rowText.includes('#4') || rowText.includes('# 4')) {
+        currentFinish = '#4';
+      } else if (rowText.includes('2B')) {
+        currentFinish = '2B';
+      } else if (rowText.includes('BA')) {
+        currentFinish = 'BA';
+      }
+      continue; // Skip section header rows
+    }
+
+    // Skip container/subtotal rows
+    const firstCell = String(row[0] || '').toLowerCase();
+    if (firstCell.includes('container') || firstCell.includes('total') ||
+        firstCell.includes('subtotal') || firstCell.includes('excel order')) continue;
+
+    // Get size string
+    const sizeStr = colMap.size >= 0 ? String(row[colMap.size] || '') : '';
+    if (!sizeStr || !sizeStr.toLowerCase().includes('ga')) continue;
+
+    const size = parseSize(sizeStr, 'yuen-chang');
+    if (!size) continue;
+
+    const lineNo = colMap.no >= 0 ? parseInt(String(row[colMap.no]), 10) : items.length + 1;
+    const itemCode = colMap.item >= 0 ? String(row[colMap.item] || '') : '';
+    const coilNo = colMap.coilNo >= 0 ? String(row[colMap.coilNo] || '') : '';
+    const heatNo = colMap.heatNo >= 0 ? String(row[colMap.heatNo] || '') : '';
+    const pcs = colMap.pcs >= 0 ? parseInt(String(row[colMap.pcs]), 10) : 1;
+
+    // Yuen Chang weights are already in LBS
+    let netWeight = colMap.netWeight >= 0 ? parseFloat(String(row[colMap.netWeight]).replace(/,/g, '')) : 0;
+    let grossWeight = colMap.grossWeight >= 0 ? parseFloat(String(row[colMap.grossWeight]).replace(/,/g, '')) : netWeight;
+
+    // Skip if no valid data
+    if (isNaN(pcs) || pcs <= 0) continue;
+
+    // Round weights
+    netWeight = Math.round(netWeight);
+    grossWeight = Math.round(grossWeight);
+
+    // Use item code as lot/serial (e.g., XL007)
+    const lotSerial = itemCode.match(/^[A-Z]{2}\d{3}$/i)
+      ? itemCode.toUpperCase()
+      : buildLotSerialNbr(poNumber, itemCode || String(lineNo));
+
+    items.push({
+      lineNumber: items.length + 1,
+      inventoryId: buildInventoryId(size, 'yuen-chang', currentFinish),
+      lotSerialNbr: lotSerial,
+      pieceCount: pcs || 1,
+      heatNumber: heatNo || coilNo,
+      grossWeightLbs: grossWeight,
+      containerQtyLbs: netWeight,
+      rawSize: sizeStr,
+      finish: currentFinish,
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Extract finish from Excel header area
+ */
+function extractFinishFromExcel(data: unknown[][], beforeRow: number): string {
+  for (let i = 0; i < beforeRow; i++) {
+    const row = data[i];
+    if (!row) continue;
+
+    const rowText = row.map(cell => String(cell || '')).join(' ').toUpperCase();
+
+    if (rowText.includes('NO.1') || rowText.includes('NO 1') || rowText.includes('#1')) {
+      return '#1';
+    }
+    if (rowText.includes('2B')) {
+      return '2B';
+    }
+    if (rowText.includes('#4') || rowText.includes('NO.4')) {
+      return '#4';
+    }
+  }
+  return '#1'; // Default for Wuu Jing
+}
+
+/**
  * Find the header row in Excel data
  */
-function findHeaderRow(data: unknown[][]): number {
-  const headerKeywords = ['size', 'pc', 'pcs', 'weight', 'bundle', 'item', 'no'];
-
-  for (let i = 0; i < Math.min(data.length, 20); i++) {
+function findHeaderRow(data: unknown[][], requiredKeywords: string[]): number {
+  for (let i = 0; i < Math.min(data.length, 25); i++) {
     const row = data[i];
     if (!row) continue;
 
     const rowText = row.map(cell => String(cell || '').toLowerCase()).join(' ');
-    const matches = headerKeywords.filter(kw => rowText.includes(kw)).length;
+    const matches = requiredKeywords.filter(kw => rowText.includes(kw)).length;
 
     if (matches >= 2) {
       return i;
@@ -159,7 +391,7 @@ function findColumnIndex(headers: string[], possibleNames: string[]): number {
 }
 
 /**
- * Parse Excel data without clear headers
+ * Parse Excel data without clear headers (fallback)
  */
 function parseExcelWithoutHeaders(
   data: unknown[][],
@@ -180,8 +412,8 @@ function parseExcelWithoutHeaders(
       if (size) {
         // Found a size - extract other values from row
         const numbers = row
-          .filter((cell, idx) => idx !== j && !isNaN(parseFloat(String(cell))))
-          .map(cell => parseFloat(String(cell)));
+          .filter((cell, idx) => idx !== j && !isNaN(parseFloat(String(cell).replace(/,/g, ''))))
+          .map(cell => parseFloat(String(cell).replace(/,/g, '')));
 
         if (numbers.length >= 2) {
           const pc = Math.round(numbers[0]) || 1;
