@@ -362,6 +362,62 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
 }
 
 /**
+ * Fix common OCR errors in thickness values
+ * OCR often drops the "1/" from fractions like "1/4" -> "4"
+ */
+function fixOcrThickness(thicknessStr: string): number {
+  // If it's already a proper fraction, parse it
+  if (thicknessStr.includes('/')) {
+    const [num, denom] = thicknessStr.split('/').map(Number);
+    if (!isNaN(num) && !isNaN(denom) && denom !== 0) {
+      return num / denom;
+    }
+  }
+
+  // If it's a decimal, parse it
+  const decimal = parseFloat(thicknessStr);
+
+  // Common OCR error: "1/4" becomes just "4", "3/8" becomes "8", etc.
+  // Steel sheet thickness is always < 1 inch, so if we see a whole number >= 2,
+  // it's likely an OCR error where the numerator was dropped
+  if (!isNaN(decimal) && decimal >= 2 && decimal <= 16) {
+    // Assume OCR dropped "1/" - treat as 1/N
+    // Common fractions: 1/4 (4), 3/8 (8), 1/2 (2), 5/8 (8), 3/4 (4)
+    // But for 8, it could be 3/8 or 5/8 - default to 3/8 (more common)
+    const commonFractions: Record<number, number> = {
+      2: 0.500,   // 1/2"
+      4: 0.250,   // 1/4"
+      8: 0.375,   // 3/8" (most common for 8)
+      16: 0.188,  // 3/16"
+    };
+    if (commonFractions[decimal]) {
+      return commonFractions[decimal];
+    }
+    // Otherwise assume it's 1/N
+    return 1 / decimal;
+  }
+
+  return decimal;
+}
+
+/**
+ * Validate if a size is reasonable for steel sheet
+ * Returns true if valid, false if likely OCR error
+ */
+function isValidSheetSize(thickness: number, width: number, length: number): boolean {
+  // Thickness: 0.018" (26GA) to 1" (common range for sheet steel)
+  if (thickness <= 0 || thickness > 1) return false;
+
+  // Width: 36" to 72" (standard sheet widths)
+  if (width < 36 || width > 72) return false;
+
+  // Length: 96" to 180" (standard sheet lengths: 96", 120", 144")
+  if (length < 96 || length > 180) return false;
+
+  return true;
+}
+
+/**
  * Primary Wuu Jing parsing for OCR - uses bundle numbers as anchors
  * Bundle numbers (001812-01) are more reliably detected by OCR than full size patterns
  */
@@ -383,6 +439,8 @@ function parseWuuJingByBundles(
     /(\d+\.\d+)[""']?\s*[*×xX]\s*(\d+)[""']?\s*[*×xX]\s*(\d+)/g,
     // Without quotes: 3/16 * 60 * 144
     /(\d+\/\d+)\s*[*×xX]\s*(\d+)\s*[*×xX]\s*(\d+)/g,
+    // OCR error: single digit thickness (4 instead of 1/4): 4"*48"*120"
+    /\b([2-8])[""']?\s*[*×xX]\s*(\d{2})[""']?\s*[*×xX]\s*(\d{2,3})[""']?/g,
   ];
 
   // Collect all imperial matches from all patterns
@@ -390,10 +448,12 @@ function parseWuuJingByBundles(
   for (const pattern of imperialPatterns) {
     const matches = [...text.matchAll(pattern)];
     for (const m of matches) {
-      // Filter to reasonable dimensions (width 36-72", length 96-180")
-      const w = parseFloat(m[2]);
-      const l = parseFloat(m[3]);
-      if (w >= 36 && w <= 72 && l >= 96 && l <= 180) {
+      const thickness = fixOcrThickness(m[1]);
+      const width = parseFloat(m[2]);
+      const length = parseFloat(m[3]);
+
+      // Validate dimensions
+      if (isValidSheetSize(thickness, width, length)) {
         allImperialMatches.push({ match: m, index: m.index! });
       }
     }
@@ -431,20 +491,12 @@ function parseWuuJingByBundles(
     if (matchesBeforeBundle.length > 0) {
       // Use the closest one (last in the list)
       const nearest = matchesBeforeBundle[matchesBeforeBundle.length - 1];
-      const thicknessStr = nearest.match[1];
-      let thickness: number;
-
-      if (thicknessStr.includes('/')) {
-        const [num, denom] = thicknessStr.split('/').map(Number);
-        thickness = num / denom;
-      } else {
-        thickness = parseFloat(thicknessStr);
-      }
-
+      const thickness = fixOcrThickness(nearest.match[1]);
       const width = parseFloat(nearest.match[2]);
       const length = parseFloat(nearest.match[3]);
 
-      if (!isNaN(thickness) && !isNaN(width) && !isNaN(length) && thickness > 0 && thickness < 2) {
+      // Double-check validity (already filtered, but be safe)
+      if (isValidSheetSize(thickness, width, length)) {
         size = {
           thickness,
           width,
