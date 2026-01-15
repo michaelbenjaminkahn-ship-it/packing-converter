@@ -109,6 +109,9 @@ export function EditableResultsTable({
       case 'warehouse':
         item.warehouse = editValue;
         break;
+      case 'orderLineNbrOverride':
+        item.orderLineNbrOverride = editValue ? parseInt(editValue, 10) : undefined;
+        break;
     }
 
     updatedItems[row] = item;
@@ -354,6 +357,9 @@ export function EditableResultsTable({
               <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                 UOM
               </th>
+              <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Order Line #
+              </th>
               <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Actions
               </th>
@@ -422,6 +428,9 @@ export function EditableResultsTable({
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500 text-center">
                     LB
                   </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                    {renderEditableCell(index, 'orderLineNbrOverride', item.orderLineNbrOverride ?? '', true)}
+                  </td>
                   <td className="px-3 py-2 whitespace-nowrap text-sm text-center">
                     <button
                       onClick={() => deleteRow(index)}
@@ -460,7 +469,7 @@ export function EditableResultsTable({
                   <td className="px-3 py-2 text-sm font-medium text-gray-900 text-right">
                     {totalNet.toLocaleString()}
                   </td>
-                  <td colSpan={5}></td>
+                  <td colSpan={6}></td>
                 </tr>
               );
             })()}

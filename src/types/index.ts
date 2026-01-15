@@ -15,6 +15,7 @@ export interface PackingListItem {
   // Override fields - when set, these take precedence over calculated values
   orderQtyOverride?: number;
   unitCostOverride?: number;
+  orderLineNbrOverride?: number;
 }
 
 export interface ParsedPackingList {
