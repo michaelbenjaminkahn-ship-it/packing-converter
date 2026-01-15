@@ -323,10 +323,11 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
       continue; // Skip section header rows
     }
 
-    // Skip container/subtotal rows
-    const firstCell = String(row[0] ?? '').toLowerCase();
-    if (firstCell.includes('container') || firstCell.includes('total') ||
-        firstCell.includes('subtotal') || firstCell.includes('excel order')) continue;
+    // Skip container/subtotal/order rows - check entire row text since column A might be empty
+    const rowTextLower = rowText.toLowerCase();
+    if (rowTextLower.includes('container no') || rowTextLower.includes('total') ||
+        rowTextLower.includes('subtotal') || rowTextLower.includes('excel order') ||
+        rowTextLower.includes('yc reference')) continue;
 
     // Get size string
     const sizeStr = colMap.size >= 0 ? String(row[colMap.size] || '') : '';
