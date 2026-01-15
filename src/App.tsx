@@ -5,7 +5,7 @@ import { UploadedFile, ParsedPackingList, ParsedInvoice } from './types';
 import { generateId, extractPoNumber } from './utils/conversion';
 import { parseFile, OcrProgress, applyInvoicePrices } from './utils/parser';
 import { downloadByContainer } from './utils/excelExport';
-import { WAREHOUSES, DEFAULT_WAREHOUSE } from './utils/constants';
+import { DEFAULT_WAREHOUSE } from './utils/constants';
 import { loadInventoryFromExcel, getInventoryCount, clearInventory } from './utils/inventoryLookup';
 
 type WeightType = 'actual' | 'theoretical';
@@ -24,7 +24,7 @@ function App() {
   const [invoices, setInvoices] = useState<ParsedInvoice[]>([]);
   const [poNumber, setPoNumber] = useState('');
   const [warehouse, setWarehouse] = useState<string>(DEFAULT_WAREHOUSE);
-  const [defaultWeightType, setDefaultWeightType] = useState<WeightType>('actual');
+  const [defaultWeightType] = useState<WeightType>('actual');
   const [weightTypes, setWeightTypes] = useState<Record<number, WeightType>>({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [inventoryCount, setInventoryCount] = useState(0);
@@ -36,8 +36,7 @@ function App() {
     status: '',
   });
   const [ocrWarnings, setOcrWarnings] = useState<string[]>([]);
-  const [warehouseAutoDetected, setWarehouseAutoDetected] = useState(false);
-  const inventoryInputRef = useRef<HTMLInputElement>(null);
+    const inventoryInputRef = useRef<HTMLInputElement>(null);
 
   // Load inventory count on mount
   useEffect(() => {
@@ -249,7 +248,6 @@ function App() {
           // Pre-fill warehouse from parsed result if detected
           if (parseResult.result.warehouse) {
             setWarehouse(parseResult.result.warehouse);
-            setWarehouseAutoDetected(true);
           }
         }
       } catch (error) {
@@ -311,7 +309,6 @@ function App() {
     setPoNumber('');
     setOcrWarnings([]);
     setWeightTypes({});
-    setWarehouseAutoDetected(false);
   }, []);
 
   const handleInventoryUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -443,85 +440,6 @@ function App() {
         <section className="mb-8">
           <FileDropzone onFilesSelected={handleFilesSelected} />
           <FileList files={files} onRemove={handleRemoveFile} />
-
-          {/* Settings */}
-          {files.length > 0 && (
-            <div className="mt-4 p-4 bg-white rounded-lg border border-gray-200">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label
-                    htmlFor="poNumber"
-                    className="block text-sm font-medium text-gray-700 mb-1"
-                  >
-                    PO Number
-                    {poNumber && (
-                      <span className="ml-2 text-xs text-green-600 font-normal">(auto-detected)</span>
-                    )}
-                  </label>
-                  <input
-                    type="text"
-                    id="poNumber"
-                    value={poNumber}
-                    onChange={(e) => setPoNumber(e.target.value)}
-                    placeholder="Auto-detected from file"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="warehouse"
-                    className="block text-sm font-medium text-gray-700 mb-1"
-                  >
-                    Warehouse
-                    {warehouseAutoDetected && (
-                      <span className="ml-2 text-xs text-green-600 font-normal">(auto-detected)</span>
-                    )}
-                  </label>
-                  <select
-                    id="warehouse"
-                    value={warehouse}
-                    onChange={(e) => setWarehouse(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  >
-                    {WAREHOUSES.map((wh) => (
-                      <option key={wh} value={wh}>
-                        {wh}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Weight Type
-                  </label>
-                  <div className="flex rounded-md shadow-sm">
-                    <button
-                      type="button"
-                      onClick={() => setDefaultWeightType('actual')}
-                      className={`flex-1 px-3 py-2 text-sm font-medium rounded-l-md border ${
-                        defaultWeightType === 'actual'
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      Actual
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDefaultWeightType('theoretical')}
-                      className={`flex-1 px-3 py-2 text-sm font-medium rounded-r-md border-t border-r border-b ${
-                        defaultWeightType === 'theoretical'
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      Theoretical
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Action Buttons */}
           {files.length > 0 && (
