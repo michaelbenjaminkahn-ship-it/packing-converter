@@ -103,7 +103,23 @@ export function findPackingListPage(pages: string[]): PageScore | null {
   const scored = scorePages(pages);
   const best = scored[0];
 
+  // If only one page, use it regardless of score
+  if (pages.length === 1 && best) {
+    return best;
+  }
+
+  // If score is decent (30+), use it
   if (best && best.score >= 30) {
+    return best;
+  }
+
+  // If best score is still reasonable (10+), try it anyway
+  if (best && best.score >= 10) {
+    return best;
+  }
+
+  // Last resort: if there are pages, return the best one
+  if (best) {
     return best;
   }
 
