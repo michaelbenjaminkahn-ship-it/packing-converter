@@ -8,6 +8,7 @@ import { VENDOR_CODES } from './constants';
  * Parse an Excel file and extract packing list data
  */
 export async function parseExcel(file: File, poNumber: string): Promise<ParsedPackingList> {
+  console.log('[parseExcel] Called with poNumber parameter:', JSON.stringify(poNumber));
   const arrayBuffer = await file.arrayBuffer();
   const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
@@ -47,6 +48,7 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
 
   // Use provided PO, or extracted from any sheet
   const finalPoNumber = poNumber || extractedPo || 'UNKNOWN';
+  console.log('[parseExcel] finalPoNumber decision: poNumber param=', JSON.stringify(poNumber), 'extractedPo=', JSON.stringify(extractedPo), '-> using:', finalPoNumber);
 
   // Use warehouse from best sheet, or from any sheet if not found
   const sheetWarehouse = extractWarehouseFromExcel(bestSheet.data);
