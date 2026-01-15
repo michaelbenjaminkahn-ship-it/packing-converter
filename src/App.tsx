@@ -1,9 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { FileDropzone, FileList } from './components';
 import { EditableResultsTable } from './components/EditableResultsTable';
-import { UploadedFile, ParsedPackingList } from './types';
+import { UploadedFile, ParsedPackingList, ParsedInvoice } from './types';
 import { generateId, extractPoNumber } from './utils/conversion';
-import { parseFile, OcrProgress } from './utils/parser';
+import { parseFile, OcrProgress, applyInvoicePrices } from './utils/parser';
 import { downloadByContainer } from './utils/excelExport';
 import { WAREHOUSES, DEFAULT_WAREHOUSE } from './utils/constants';
 import { loadInventoryFromExcel, getInventoryCount, clearInventory } from './utils/inventoryLookup';
@@ -21,6 +21,7 @@ interface OcrState {
 function App() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [results, setResults] = useState<ParsedPackingList[]>([]);
+  const [invoices, setInvoices] = useState<ParsedInvoice[]>([]);
   const [poNumber, setPoNumber] = useState('');
   const [warehouse, setWarehouse] = useState<string>(DEFAULT_WAREHOUSE);
   const [defaultWeightType, setDefaultWeightType] = useState<WeightType>('actual');
@@ -106,7 +107,27 @@ function App() {
         throw new Error(parseResult.error);
       }
 
-      if (parseResult.result) {
+      if (parseResult.isInvoice && parseResult.invoice) {
+        // This is an invoice - store it and try to apply to existing results
+        setInvoices((prev) => [...prev, parseResult.invoice!]);
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === uploadedFile.id
+              ? { ...f, status: 'completed' as const, error: `Invoice detected (PO# ${parseResult.invoice!.poNumber})` }
+              : f
+          )
+        );
+
+        // Apply invoice prices to existing packing lists with matching PO
+        setResults((prev) =>
+          prev.map((result) => {
+            if (result.poNumber === parseResult.invoice!.poNumber) {
+              return applyInvoicePrices(result, parseResult.invoice!);
+            }
+            return result;
+          })
+        );
+      } else if (parseResult.result) {
         // Add warning if OCR confidence was low
         if (parseResult.ocrWarning) {
           setOcrWarnings((prev) => [...prev, `${uploadedFile.name}: ${parseResult.ocrWarning}`]);
@@ -120,7 +141,19 @@ function App() {
           )
         );
 
-        setResults((prev) => [...prev, parseResult.result!]);
+        // Check if there's a matching invoice to apply prices
+        setInvoices((currentInvoices) => {
+          const matchingInvoice = currentInvoices.find(
+            (inv) => inv.poNumber === parseResult.result!.poNumber
+          );
+          if (matchingInvoice) {
+            const resultWithPrices = applyInvoicePrices(parseResult.result!, matchingInvoice);
+            setResults((prev) => [...prev, resultWithPrices]);
+          } else {
+            setResults((prev) => [...prev, parseResult.result!]);
+          }
+          return currentInvoices;
+        });
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -161,6 +194,7 @@ function App() {
 
     // Process each file
     const newResults: ParsedPackingList[] = [];
+    const newInvoices: ParsedInvoice[] = [];
     const filesNeedingOcr: UploadedFile[] = [];
 
     for (const uploadedFile of pendingFiles) {
@@ -184,6 +218,16 @@ function App() {
             prev.map((f) =>
               f.id === uploadedFile.id
                 ? { ...f, status: 'error' as const, error: parseResult.error }
+                : f
+            )
+          );
+        } else if (parseResult.isInvoice && parseResult.invoice) {
+          // This is an invoice - store it separately
+          newInvoices.push(parseResult.invoice);
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === uploadedFile.id
+                ? { ...f, status: 'completed' as const, error: `Invoice detected (PO# ${parseResult.invoice!.poNumber})` }
                 : f
             )
           );
@@ -220,14 +264,32 @@ function App() {
       }
     }
 
-    setResults((prev) => [...prev, ...newResults]);
+    // Store new invoices
+    if (newInvoices.length > 0) {
+      setInvoices((prev) => [...prev, ...newInvoices]);
+    }
+
+    // Apply invoice prices to packing lists (match by PO number)
+    const allInvoices = [...invoices, ...newInvoices];
+    const resultsWithPrices = newResults.map((result) => {
+      // Find matching invoice by PO number
+      const matchingInvoice = allInvoices.find(
+        (inv) => inv.poNumber === result.poNumber
+      );
+      if (matchingInvoice) {
+        return applyInvoicePrices(result, matchingInvoice);
+      }
+      return result;
+    });
+
+    setResults((prev) => [...prev, ...resultsWithPrices]);
     setIsProcessing(false);
 
     // Auto-process files needing OCR
     for (const file of filesNeedingOcr) {
       await processFileWithOcr(file);
     }
-  }, [files, poNumber, processFileWithOcr]);
+  }, [files, poNumber, invoices, processFileWithOcr]);
 
   const handleExport = useCallback(() => {
     if (results.length === 0) return;
@@ -245,6 +307,7 @@ function App() {
   const handleClear = useCallback(() => {
     setFiles([]);
     setResults([]);
+    setInvoices([]);
     setPoNumber('');
     setOcrWarnings([]);
     setWeightTypes({});
@@ -505,6 +568,26 @@ function App() {
             </div>
           )}
         </section>
+
+        {/* Invoices Loaded Indicator */}
+        {invoices.length > 0 && (
+          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center gap-2 text-sm text-green-700">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="font-medium">
+                {invoices.length} invoice{invoices.length > 1 ? 's' : ''} loaded
+              </span>
+              <span className="text-green-600">
+                (PO# {invoices.map(i => i.poNumber).join(', ')})
+              </span>
+            </div>
+            <p className="text-xs text-green-600 mt-1">
+              Unit costs will be automatically applied to matching packing lists.
+            </p>
+          </div>
+        )}
 
         {/* Results Section */}
         {hasResults && (

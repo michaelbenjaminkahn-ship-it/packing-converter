@@ -1,5 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist';
-import { PackingListItem, ParsedPackingList, Supplier } from '../types';
+import { PackingListItem, ParsedPackingList, ParsedInvoice, InvoiceLineItem, Supplier } from '../types';
 import { detectSupplier, findPackingListPage } from './detection';
 import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse, extractPoFromBundles, extractPoNumber } from './conversion';
 import { VENDOR_CODES, GAUGE_TO_DECIMAL } from './constants';
@@ -931,3 +931,294 @@ export function needsOcr(error: Error): boolean {
 
 // Re-export OCR progress type for consumers
 export type { OcrProgress };
+
+/**
+ * Detect if a PDF page is a commercial invoice (vs packing list)
+ */
+export function isInvoicePage(text: string): boolean {
+  const invoiceIndicators = [
+    /COMMERCIAL\s+INVOICE/i,
+    /PRICE\s*\(USD\/PCS\)/i,
+    /PRICE\s+US\$\/PC/i,
+    /UNIT\s+PRICE/i,
+    /TOTAL\s+INVOICE\s+VALUE/i,
+  ];
+
+  const packingIndicators = [
+    /PACKING\s+LIST/i,
+    /CONTAINER\s+NO\./i,
+    /BUNDLE\s+NO\./i,
+    /G['']?WEIGHT/i,
+    /N['']?WEIGHT/i,
+  ];
+
+  const invoiceScore = invoiceIndicators.filter(p => p.test(text)).length;
+  const packingScore = packingIndicators.filter(p => p.test(text)).length;
+
+  return invoiceScore > packingScore && invoiceScore >= 1;
+}
+
+/**
+ * Extract PO number from YC invoice text
+ * Looks for: "EXCEL ORDER # 001852" or "EXCEL METALS LLC ORDER NO.: 001772"
+ */
+function extractInvoicePoNumber(text: string): string {
+  // EXCEL ORDER # 001852
+  const ycMatch = text.match(/EXCEL\s+ORDER\s*#\s*0*(\d{3,6})/i);
+  if (ycMatch) return ycMatch[1];
+
+  // EXCEL METALS LLC ORDER NO.: 001772
+  const wjMatch = text.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*0*(\d{3,6})/i);
+  if (wjMatch) return wjMatch[1];
+
+  return '';
+}
+
+/**
+ * Extract invoice number from YC invoice
+ * Looks for: "Invoice NO. QEP996/25"
+ */
+function extractInvoiceNumber(text: string): string {
+  const match = text.match(/Invoice\s*NO\.?\s*:?\s*([A-Z0-9\/\-]+)/i);
+  return match ? match[1] : '';
+}
+
+/**
+ * Parse Yuen Chang invoice from PDF text
+ * Extracts price data for matching with packing lists
+ */
+function parseYuenChangInvoice(text: string): ParsedInvoice | null {
+  const poNumber = extractInvoicePoNumber(text);
+  const invoiceNumber = extractInvoiceNumber(text);
+
+  if (!poNumber) {
+    return null;
+  }
+
+  const items: InvoiceLineItem[] = [];
+
+  // YC invoice format:
+  // ITEM SIZE (GA) | PCS | QTY (LBS) | QTY (MT) | PRICE (USD/PCS) | VALUE (USD)
+  // 3/16" x 48" x 120" | 26 | 7,989.55 | 3.624 | 266.60 | 6,931.60
+
+  // Pattern to match invoice rows
+  // Size: 3/16" x 48" x 120" or 1/4" x 60" x 144"
+  const rowPattern = /(\d+\/\d+)[""']\s*x\s*(\d+)[""']?\s*x\s*(\d+)[""']?\s+(\d+)\s+([\d,]+\.?\d*)\s+([\d.]+)\s+([\d.]+)\s+([\d,]+\.?\d*)/gi;
+
+  let match;
+  while ((match = rowPattern.exec(text)) !== null) {
+    const thickness = match[1];  // e.g., "3/16"
+    const width = match[2];      // e.g., "48"
+    const length = match[3];     // e.g., "120"
+    const pcs = parseInt(match[4], 10);
+    const qtyLbs = parseFloat(match[5].replace(/,/g, ''));
+    // match[6] is QTY (MT) - we skip this
+    const pricePerPiece = parseFloat(match[7]);
+    // match[8] is VALUE - we could use this for validation
+
+    if (pcs > 0 && qtyLbs > 0 && pricePerPiece > 0) {
+      const weightPerPiece = qtyLbs / pcs;
+      const pricePerLb = Math.round((pricePerPiece / weightPerPiece) * 100) / 100;
+
+      items.push({
+        size: `${thickness}" x ${width}" x ${length}"`,
+        pcs,
+        qtyLbs,
+        pricePerPiece,
+        pricePerLb,
+      });
+    }
+  }
+
+  // If row pattern didn't work, try a more flexible approach
+  if (items.length === 0) {
+    // Look for size patterns and nearby numbers
+    const sizePattern = /(\d+\/\d+)[""']?\s*x\s*(\d+)[""']?\s*x\s*(\d+)[""']?/gi;
+    const sizeMatches = [...text.matchAll(sizePattern)];
+
+    for (const sizeMatch of sizeMatches) {
+      const thickness = sizeMatch[1];
+      const width = sizeMatch[2];
+      const length = sizeMatch[3];
+      const matchIndex = sizeMatch.index!;
+
+      // Look for numbers after this size (within 200 chars)
+      const afterText = text.substring(matchIndex, matchIndex + 200);
+      const numbers = afterText.match(/[\d,]+\.?\d*/g) || [];
+      const numericValues = numbers
+        .map(n => parseFloat(n.replace(/,/g, '')))
+        .filter(n => !isNaN(n) && n > 0);
+
+      // Expected order: PCS, QTY(LBS), QTY(MT), PRICE(USD/PCS), VALUE
+      if (numericValues.length >= 4) {
+        const pcs = Math.round(numericValues[0]);
+        const qtyLbs = numericValues[1];
+        // Skip index 2 (MT)
+        const pricePerPiece = numericValues[3];
+
+        if (pcs > 0 && pcs < 1000 && qtyLbs > 100 && pricePerPiece > 10) {
+          const weightPerPiece = qtyLbs / pcs;
+          const pricePerLb = Math.round((pricePerPiece / weightPerPiece) * 100) / 100;
+
+          items.push({
+            size: `${thickness}" x ${width}" x ${length}"`,
+            pcs,
+            qtyLbs,
+            pricePerPiece,
+            pricePerLb,
+          });
+        }
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  // Calculate total value
+  const totalValue = items.reduce((sum, item) => sum + (item.pricePerPiece * item.pcs), 0);
+
+  return {
+    supplier: 'yuen-chang',
+    poNumber,
+    invoiceNumber,
+    items,
+    totalValue,
+  };
+}
+
+/**
+ * Parse invoice from PDF file
+ * Returns parsed invoice data if it's an invoice, null if it's a packing list
+ */
+export async function parseInvoicePdf(file: File): Promise<ParsedInvoice | null> {
+  // Extract text from all pages
+  let pages: string[];
+  try {
+    pages = await extractPdfText(file);
+  } catch {
+    return null;
+  }
+
+  // Check if any page is an invoice
+  for (const pageText of pages) {
+    if (isInvoicePage(pageText)) {
+      // Detect supplier
+      const supplier = detectSupplier(pageText);
+
+      if (supplier === 'yuen-chang') {
+        return parseYuenChangInvoice(pageText);
+      }
+
+      // Could add Wuu Jing invoice parsing here if needed
+      // (WJ invoices come as Excel tabs, not separate PDFs)
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Parse invoice from PDF using OCR (for scanned invoices)
+ */
+export async function parseInvoicePdfWithOcr(
+  file: File,
+  onProgress?: (progress: OcrProgress) => void
+): Promise<ParsedInvoice | null> {
+  const ocrResults = await extractTextWithOcr(file, onProgress);
+  const pages = ocrResults.map(r => r.text);
+
+  for (const pageText of pages) {
+    if (isInvoicePage(pageText)) {
+      const supplier = detectSupplier(pageText);
+
+      if (supplier === 'yuen-chang') {
+        return parseYuenChangInvoice(pageText);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Apply invoice prices to packing list items
+ * Matches by size and sets unitCostOverride
+ */
+export function applyInvoicePrices(
+  packingList: ParsedPackingList,
+  invoice: ParsedInvoice
+): ParsedPackingList {
+  // Build a map of prices by normalized size
+  const priceMap = new Map<string, number>();
+
+  for (const item of invoice.items) {
+    // Normalize size: "3/16" x 48" x 120"" -> "3/16-48-120"
+    const normalized = normalizeSize(item.size);
+    priceMap.set(normalized, item.pricePerLb);
+  }
+
+  // Apply prices to packing list items
+  const updatedItems = packingList.items.map(item => {
+    // Extract dimensions from inventoryId or rawSize
+    const normalized = normalizeInventorySize(item.inventoryId, item.rawSize);
+    const pricePerLb = priceMap.get(normalized);
+
+    if (pricePerLb !== undefined && !item.unitCostOverride) {
+      return { ...item, unitCostOverride: pricePerLb };
+    }
+    return item;
+  });
+
+  return { ...packingList, items: updatedItems };
+}
+
+/**
+ * Normalize invoice size for matching
+ * "3/16" x 48" x 120"" -> "0.188-48-120"
+ */
+function normalizeSize(size: string): string {
+  const match = size.match(/(\d+\/\d+|\d+\.?\d*)[""']?\s*x\s*(\d+)[""']?\s*x\s*(\d+)/i);
+  if (!match) return size;
+
+  let thickness: number;
+  if (match[1].includes('/')) {
+    const [num, denom] = match[1].split('/').map(Number);
+    thickness = num / denom;
+  } else {
+    thickness = parseFloat(match[1]);
+  }
+
+  const width = parseInt(match[2], 10);
+  const length = parseInt(match[3], 10);
+
+  return `${thickness.toFixed(3)}-${width}-${length}`;
+}
+
+/**
+ * Normalize inventory ID or rawSize for matching
+ * "0.188-48__-120__-304/304L-#1___" -> "0.188-48-120"
+ */
+function normalizeInventorySize(inventoryId: string, rawSize: string): string {
+  // Try inventory ID first: "0.188-48__-120__-304/304L-#1___"
+  const invMatch = inventoryId.match(/^([\d.]+)-(\d+)__-(\d+)__-/);
+  if (invMatch) {
+    return `${parseFloat(invMatch[1]).toFixed(3)}-${invMatch[2]}-${invMatch[3]}`;
+  }
+
+  // Try rawSize: "3/16"*48"*120"" or similar
+  const sizeMatch = rawSize.match(/(\d+\/\d+|\d+\.?\d*)[""']?\s*[*x×]\s*(\d+)[""']?\s*[*x×]\s*(\d+)/i);
+  if (sizeMatch) {
+    let thickness: number;
+    if (sizeMatch[1].includes('/')) {
+      const [num, denom] = sizeMatch[1].split('/').map(Number);
+      thickness = num / denom;
+    } else {
+      thickness = parseFloat(sizeMatch[1]);
+    }
+    return `${thickness.toFixed(3)}-${sizeMatch[2]}-${sizeMatch[3]}`;
+  }
+
+  return '';
+}
