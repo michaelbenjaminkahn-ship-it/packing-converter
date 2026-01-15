@@ -34,6 +34,7 @@ function App() {
     status: '',
   });
   const [ocrWarnings, setOcrWarnings] = useState<string[]>([]);
+  const [warehouseAutoDetected, setWarehouseAutoDetected] = useState(false);
   const inventoryInputRef = useRef<HTMLInputElement>(null);
 
   // Load inventory count on mount
@@ -201,8 +202,9 @@ function App() {
           }
 
           // Pre-fill warehouse from parsed result if detected
-          if (parseResult.result.warehouse && parseResult.result.warehouse !== 'LA') {
+          if (parseResult.result.warehouse) {
             setWarehouse(parseResult.result.warehouse);
+            setWarehouseAutoDetected(true);
           }
         }
       } catch (error) {
@@ -250,6 +252,7 @@ function App() {
     setResults([]);
     setPoNumber('');
     setOcrWarnings([]);
+    setWarehouseAutoDetected(false);
   }, []);
 
   const handleInventoryUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -411,6 +414,9 @@ function App() {
                     className="block text-sm font-medium text-gray-700 mb-1"
                   >
                     Warehouse
+                    {warehouseAutoDetected && (
+                      <span className="ml-2 text-xs text-green-600 font-normal">(auto-detected)</span>
+                    )}
                   </label>
                   <select
                     id="warehouse"
