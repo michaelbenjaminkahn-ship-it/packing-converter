@@ -4,8 +4,8 @@ import { detectSupplier, findPackingListPage } from './detection';
 import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs } from './conversion';
 import { VENDOR_CODES } from './constants';
 
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Configure PDF.js worker - use a specific compatible version
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs`;
 
 /**
  * Extract text from all pages of a PDF
