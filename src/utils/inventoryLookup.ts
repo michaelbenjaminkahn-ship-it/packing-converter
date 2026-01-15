@@ -20,8 +20,8 @@ export async function loadInventoryFromExcel(file: File): Promise<number> {
   for (const row of data) {
     // Try common column names
     const id = row['Inventory ID'] || row['InventoryID'] || row['Item'] || row['SKU'] || Object.values(row)[0];
-    if (typeof id === 'string' && id.includes('-') && id.includes('304')) {
-      ids.push(id.trim());
+    if (id !== undefined && id !== null && String(id).trim()) {
+      ids.push(String(id).trim());
     }
   }
 
