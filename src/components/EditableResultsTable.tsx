@@ -88,6 +88,7 @@ interface EditableResultsTableProps {
   weightType?: WeightType;
   onWeightTypeChange?: (weightType: WeightType) => void;
   onUpdate: (updatedResult: ParsedPackingList) => void;
+  onExport?: () => void;
 }
 
 export function EditableResultsTable({
@@ -95,7 +96,8 @@ export function EditableResultsTable({
   warehouse = 'LA',
   weightType = 'actual',
   onWeightTypeChange,
-  onUpdate
+  onUpdate,
+  onExport
 }: EditableResultsTableProps) {
   const [editingCell, setEditingCell] = useState<{ row: number; field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -339,15 +341,28 @@ export function EditableResultsTable({
               </div>
             )}
           </div>
-          <button
-            onClick={addRow}
-            className="px-3 py-1.5 text-xs font-medium bg-navy-800 text-white rounded-lg hover:bg-navy-700 active:bg-navy-900 transition-all duration-200 flex items-center gap-1.5 shadow-sm"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add Row
-          </button>
+          <div className="flex items-center gap-2">
+            {onExport && (
+              <button
+                onClick={onExport}
+                className="px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 active:bg-emerald-700 transition-all duration-200 flex items-center gap-1.5 shadow-sm"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Export
+              </button>
+            )}
+            <button
+              onClick={addRow}
+              className="px-3 py-1.5 text-xs font-medium bg-navy-800 text-white rounded-lg hover:bg-navy-700 active:bg-navy-900 transition-all duration-200 flex items-center gap-1.5 shadow-sm"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Row
+            </button>
+          </div>
         </div>
       </div>
 
