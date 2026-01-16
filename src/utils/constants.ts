@@ -123,7 +123,7 @@ export const MILL_CERT_KEYWORDS = [
 export const DEFAULT_WAREHOUSE = 'LA';
 
 // Warehouses
-export const WAREHOUSES = ['LA', 'Baltimore', 'Houston'] as const;
+export const WAREHOUSES = ['LA', 'Baltimore', 'Houston', 'Oakland', 'Seattle', 'Kent', 'Tampa', 'Camden'] as const;
 
 // Acumatica output columns - must match template exactly
 export const ACUMATICA_COLUMNS = [

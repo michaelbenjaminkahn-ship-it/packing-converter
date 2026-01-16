@@ -155,6 +155,15 @@ export function exportToExcel(
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(wsData);
 
+  // Apply 4 decimal place format to Unit Cost column (column J, index 9)
+  const unitCostColIndex = 9; // 0-indexed: J column
+  for (let rowIdx = 1; rowIdx <= rows.length; rowIdx++) {
+    const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: unitCostColIndex });
+    if (ws[cellRef] && typeof ws[cellRef].v === 'number') {
+      ws[cellRef].z = '0.0000'; // 4 decimal places
+    }
+  }
+
   // Set column widths
   ws['!cols'] = [
     { wch: 12 }, // Order Number
@@ -290,6 +299,15 @@ export function exportMultipleToExcel(
     ];
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Apply 4 decimal place format to Unit Cost column (column J, index 9)
+    const unitCostColIndex = 9;
+    for (let rowIdx = 1; rowIdx <= rows.length; rowIdx++) {
+      const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: unitCostColIndex });
+      if (ws[cellRef] && typeof ws[cellRef].v === 'number') {
+        ws[cellRef].z = '0.0000';
+      }
+    }
 
     // Set column widths
     ws['!cols'] = [
