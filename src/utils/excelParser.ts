@@ -650,7 +650,7 @@ function parseWuuJingInvoice(data: unknown[][]): Map<string, InvoicePriceData> {
       size: normalizedSize,
       pricePerPiece: pricePerPc,
       weightPerPieceLbs,
-      pricePerLb: Math.round(pricePerLb * 100) / 100, // Round to 2 decimal places
+      pricePerLb: Math.round(pricePerLb * 10000) / 10000, // Round to 4 decimal places
     });
   }
 
