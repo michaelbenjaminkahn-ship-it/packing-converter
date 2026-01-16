@@ -30,16 +30,16 @@ function getSkidWeight(lengthInches: number): number {
 }
 
 /**
- * Calculate theoretical weight from dimensions using Yoshi's lookup table
+ * Calculate theoretical weights from dimensions using Yoshi's lookup table
  * Formula: Lbs/Pc = (Width × Length / 144) × Lbs/Sq Ft
- * For #1 finish items, adds skid weight based on length
+ * Returns both steel weight (for Order Qty) and total weight with skid (for Gross/Container)
  */
-function calculateTheoreticalWeight(item: PackingListItem): number {
+function calculateTheoreticalWeights(item: PackingListItem): { steelWeight: number; totalWeight: number } {
   // Parse dimensions from inventory ID: "0.188-60__-144__-304/304L-#1____"
   const match = item.inventoryId.match(/^([\d.]+)-(\d+)__-(\d+)__-/);
   if (!match) {
     // Fallback to actual weight if can't parse
-    return item.grossWeightLbs;
+    return { steelWeight: item.grossWeightLbs, totalWeight: item.grossWeightLbs };
   }
 
   const thickness = parseFloat(match[1]);
@@ -61,24 +61,27 @@ function calculateTheoreticalWeight(item: PackingListItem): number {
     steelWeight = weightPerPiece * item.pieceCount;
   }
 
-  // Add skid weight for #1 finish items
+  // Add skid weight for #1 finish items (only to total, not to pure steel weight)
   let totalWeight = steelWeight;
   if (isHotRolledFinish(item.inventoryId)) {
     totalWeight += getSkidWeight(length);
   }
 
-  return Math.round(totalWeight);
+  return { steelWeight: Math.round(steelWeight), totalWeight: Math.round(totalWeight) };
 }
 
 /**
  * Get weight based on weight type selection
+ * Returns: gross (with skid), net (with skid), orderQty (pure steel, no skid)
  */
-function getWeight(item: PackingListItem, weightType: WeightType): { gross: number; net: number } {
+function getWeight(item: PackingListItem, weightType: WeightType): { gross: number; net: number; orderQty: number } {
   if (weightType === 'theoretical') {
-    const theoretical = calculateTheoreticalWeight(item);
-    return { gross: theoretical, net: theoretical };
+    const { steelWeight, totalWeight } = calculateTheoreticalWeights(item);
+    // Gross/Container: includes skid weight for #1 finish
+    // OrderQty: pure steel weight only (no skid)
+    return { gross: totalWeight, net: totalWeight, orderQty: steelWeight };
   }
-  return { gross: item.grossWeightLbs, net: item.containerQtyLbs };
+  return { gross: item.grossWeightLbs, net: item.containerQtyLbs, orderQty: item.containerQtyLbs };
 }
 
 /**
@@ -89,14 +92,15 @@ export function toAcumaticaRows(
   warehouse: string = DEFAULT_WAREHOUSE,
   weightType: WeightType = 'actual'
 ): AcumaticaRow[] {
-  // Pre-calculate OrderQty per SKU (sum of container quantities for items with same inventoryId)
+  // Pre-calculate OrderQty per SKU (sum of pure steel weights, no skid)
   const orderQtyBySku: Record<string, number> = {};
   packingList.items.forEach((item) => {
     const weights = getWeight(item, weightType);
     if (!orderQtyBySku[item.inventoryId]) {
       orderQtyBySku[item.inventoryId] = 0;
     }
-    orderQtyBySku[item.inventoryId] += weights.net;
+    // Use orderQty (pure steel weight) for Order Qty, not net (which includes skid)
+    orderQtyBySku[item.inventoryId] += weights.orderQty;
   });
 
   return packingList.items.map((item) => {
