@@ -12,11 +12,13 @@ export function FileDropzone({
   multiple = true,
 }: FileDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [dragError, setDragError] = useState<string | null>(null);
 
   const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
+    setDragError(null);
   }, []);
 
   const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
@@ -37,7 +39,18 @@ export function FileDropzone({
       });
 
       if (droppedFiles.length > 0) {
+        setDragError(null);
         onFilesSelected(droppedFiles);
+      } else {
+        // Check if there were items but no files (likely from email client)
+        const hasItems = e.dataTransfer.items && e.dataTransfer.items.length > 0;
+        const hasTypes = e.dataTransfer.types && e.dataTransfer.types.length > 0;
+
+        if (hasItems || hasTypes) {
+          setDragError('Email attachments must be downloaded first. Save to your computer, then drag from the folder.');
+          // Clear error after 5 seconds
+          setTimeout(() => setDragError(null), 5000);
+        }
       }
     },
     [onFilesSelected]
@@ -106,6 +119,11 @@ export function FileDropzone({
           <p className="text-xs text-slate-400">
             PDF and Excel files (.pdf, .xlsx, .xls)
           </p>
+          {dragError && (
+            <p className="mt-2 text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg">
+              {dragError}
+            </p>
+          )}
         </div>
       </label>
     </div>
