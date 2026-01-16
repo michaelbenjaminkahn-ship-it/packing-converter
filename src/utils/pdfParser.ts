@@ -1038,7 +1038,7 @@ function parseYuenChangInvoice(text: string): ParsedInvoice | null {
 
     if (pcs > 0 && qtyLbs > 0 && pricePerPiece > 0) {
       const weightPerPiece = qtyLbs / pcs;
-      const pricePerLb = Math.round((pricePerPiece / weightPerPiece) * 100) / 100;
+      const pricePerLb = Math.round((pricePerPiece / weightPerPiece) * 10000) / 10000;
 
       items.push({
         size: `${thickness}" x ${width}" x ${length}"`,
@@ -1078,7 +1078,7 @@ function parseYuenChangInvoice(text: string): ParsedInvoice | null {
 
         if (pcs > 0 && pcs < 1000 && qtyLbs > 100 && pricePerPiece > 10) {
           const weightPerPiece = qtyLbs / pcs;
-          const pricePerLb = Math.round((pricePerPiece / weightPerPiece) * 100) / 100;
+          const pricePerLb = Math.round((pricePerPiece / weightPerPiece) * 10000) / 10000;
 
           items.push({
             size: `${thickness}" x ${width}" x ${length}"`,
