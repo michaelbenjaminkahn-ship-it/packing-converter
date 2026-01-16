@@ -123,6 +123,22 @@ export const MILL_CERT_KEYWORDS = [
 // Source: Chatham Steel (https://www.chathamsteel.com/index.php/steel-plate-sheets/)
 // Formula: Lbs/Pc = (Width × Length / 144) × Lbs/Sq Ft
 export const STEEL_LBS_PER_SQ_FT: Record<string, number> = {
+  // Sheet gauges (cold rolled - 2B/#3/#4/#8 finish) - rarely used for theoretical weight
+  '0.015': 0.630,   // 28 Ga
+  '0.018': 0.756,   // 26 Ga
+  '0.024': 1.008,   // 24 Ga
+  '0.030': 1.260,   // 22 Ga
+  '0.036': 1.512,   // 20 Ga
+  '0.042': 1.764,   // 19 Ga
+  '0.048': 2.016,   // 18 Ga
+  '0.060': 2.520,   // 16 Ga
+  '0.075': 3.150,   // 14 Ga
+  '0.090': 3.780,   // 13 Ga
+  '0.105': 4.410,   // 12 Ga
+  '0.120': 5.040,   // 11 Ga
+  '0.135': 5.670,   // 10 Ga
+  '0.187': 7.871,   // 7 Ga
+  // Plate thicknesses (hot rolled - #1 finish) - primary use case
   '0.188': 8.579,   // 3/16"
   '0.250': 11.16,   // 1/4"
   '0.313': 13.75,   // 5/16"
