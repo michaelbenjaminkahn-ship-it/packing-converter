@@ -338,7 +338,8 @@ function App() {
     results.forEach((result, index) => {
       setTimeout(() => {
         const resultWeightType = weightTypes[index] || defaultWeightType;
-        downloadByContainer(result, warehouse, resultWeightType);
+        // Use each result's own warehouse, not the global warehouse state
+        downloadByContainer(result, result.warehouse || warehouse, resultWeightType);
       }, index * 1000); // 1 second delay between each download
     });
   }, [results, warehouse, weightTypes, defaultWeightType]);
@@ -347,7 +348,8 @@ function App() {
     const result = results[index];
     if (!result) return;
     const resultWeightType = weightTypes[index] || defaultWeightType;
-    downloadByContainer(result, warehouse, resultWeightType);
+    // Use each result's own warehouse, not the global warehouse state
+    downloadByContainer(result, result.warehouse || warehouse, resultWeightType);
   }, [results, warehouse, weightTypes, defaultWeightType]);
 
   const handleClear = useCallback(() => {
@@ -578,7 +580,7 @@ function App() {
                 <EditableResultsTable
                   key={index}
                   result={result}
-                  warehouse={warehouse}
+                  warehouse={result.warehouse || warehouse}
                   weightType={weightTypes[index] || defaultWeightType}
                   onWeightTypeChange={(wt) => setWeightTypes(prev => ({ ...prev, [index]: wt }))}
                   onUpdate={(updatedResult) => handleResultUpdate(index, updatedResult)}
