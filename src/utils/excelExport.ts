@@ -67,7 +67,8 @@ function calculateTheoreticalWeights(item: PackingListItem): { steelWeight: numb
     totalWeight += getSkidWeight(length);
   }
 
-  return { steelWeight: Math.round(steelWeight), totalWeight: Math.round(totalWeight) };
+  // Round steelWeight to 2 decimals for Order Qty precision, totalWeight to whole number for Gross
+  return { steelWeight: Math.round(steelWeight * 100) / 100, totalWeight: Math.round(totalWeight) };
 }
 
 /**
@@ -172,12 +173,17 @@ export function exportToExcel(
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-  // Apply 4 decimal place format to Unit Cost column (column J, index 9)
-  const unitCostColIndex = 9; // 0-indexed: J column
+  // Apply number formats
   for (let rowIdx = 1; rowIdx <= rows.length; rowIdx++) {
-    const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: unitCostColIndex });
-    if (ws[cellRef] && typeof ws[cellRef].v === 'number') {
-      ws[cellRef].z = '0.0000'; // 4 decimal places
+    // Order Qty column (H, index 7) - 2 decimal places
+    const orderQtyRef = XLSX.utils.encode_cell({ r: rowIdx, c: 7 });
+    if (ws[orderQtyRef] && typeof ws[orderQtyRef].v === 'number') {
+      ws[orderQtyRef].z = '#,##0.00';
+    }
+    // Unit Cost column (J, index 9) - 4 decimal places
+    const unitCostRef = XLSX.utils.encode_cell({ r: rowIdx, c: 9 });
+    if (ws[unitCostRef] && typeof ws[unitCostRef].v === 'number') {
+      ws[unitCostRef].z = '0.0000';
     }
   }
 
@@ -317,12 +323,17 @@ export function exportMultipleToExcel(
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-    // Apply 4 decimal place format to Unit Cost column (column J, index 9)
-    const unitCostColIndex = 9;
+    // Apply number formats
     for (let rowIdx = 1; rowIdx <= rows.length; rowIdx++) {
-      const cellRef = XLSX.utils.encode_cell({ r: rowIdx, c: unitCostColIndex });
-      if (ws[cellRef] && typeof ws[cellRef].v === 'number') {
-        ws[cellRef].z = '0.0000';
+      // Order Qty column (H, index 7) - 2 decimal places
+      const orderQtyRef = XLSX.utils.encode_cell({ r: rowIdx, c: 7 });
+      if (ws[orderQtyRef] && typeof ws[orderQtyRef].v === 'number') {
+        ws[orderQtyRef].z = '#,##0.00';
+      }
+      // Unit Cost column (J, index 9) - 4 decimal places
+      const unitCostRef = XLSX.utils.encode_cell({ r: rowIdx, c: 9 });
+      if (ws[unitCostRef] && typeof ws[unitCostRef].v === 'number') {
+        ws[unitCostRef].z = '0.0000';
       }
     }
 

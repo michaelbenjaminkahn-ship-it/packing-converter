@@ -74,7 +74,8 @@ function calculateTheoreticalWeights(item: PackingListItem): { steelWeight: numb
     totalWeight += getSkidWeight(length);
   }
 
-  return { steelWeight: Math.round(steelWeight), totalWeight: Math.round(totalWeight) };
+  // Round steelWeight to 2 decimals for Order Qty precision, totalWeight to whole number for Gross
+  return { steelWeight: Math.round(steelWeight * 100) / 100, totalWeight: Math.round(totalWeight) };
 }
 
 // Common Wuu Jing sizes for dropdown
@@ -502,7 +503,7 @@ export function EditableResultsTable({
                     {renderEditableCell(index, 'grossWeightLbs', displayGrossWeight, true)}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'orderQtyOverride', orderQty, true)}
+                    {renderEditableCell(index, 'orderQtyOverride', orderQty, true, false, 2)}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
                     {renderEditableCell(index, 'containerQtyLbs', displayContainerWeight, true)}
@@ -560,7 +561,7 @@ export function EditableResultsTable({
                     {totalGross.toLocaleString()}
                   </td>
                   <td className="px-2 py-2 text-xs font-semibold text-slate-700 text-right">
-                    {totalOrderQty.toLocaleString()}
+                    {totalOrderQty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className="px-2 py-2 text-xs font-semibold text-slate-700 text-right">
                     {totalContainer.toLocaleString()}
