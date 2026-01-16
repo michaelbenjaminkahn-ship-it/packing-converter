@@ -32,7 +32,7 @@ function getSkidWeight(lengthInches: number): number {
 /**
  * Calculate theoretical weights from dimensions using Yoshi's lookup table
  * Formula: Lbs/Pc = (Width × Length / 144) × Lbs/Sq Ft
- * Returns both steel weight (for Order Qty) and total weight with skid (for Gross/Container)
+ * Returns both steel weight (for Order Qty & Container) and total weight with skid (for Gross)
  */
 function calculateTheoreticalWeights(item: PackingListItem): { steelWeight: number; totalWeight: number } {
   // Parse dimensions from inventory ID: "0.188-60__-144__-304/304L-#1____"
@@ -72,14 +72,15 @@ function calculateTheoreticalWeights(item: PackingListItem): { steelWeight: numb
 
 /**
  * Get weight based on weight type selection
- * Returns: gross (with skid), net (with skid), orderQty (pure steel, no skid)
+ * Returns: gross (with skid for #1), net/container (pure steel), orderQty (pure steel)
  */
 function getWeight(item: PackingListItem, weightType: WeightType): { gross: number; net: number; orderQty: number } {
   if (weightType === 'theoretical') {
     const { steelWeight, totalWeight } = calculateTheoreticalWeights(item);
-    // Gross/Container: includes skid weight for #1 finish
-    // OrderQty: pure steel weight only (no skid)
-    return { gross: totalWeight, net: totalWeight, orderQty: steelWeight };
+    // Gross: includes skid weight for #1 finish (what's on the scale)
+    // Net/Container: pure steel weight only (inventory weight)
+    // OrderQty: pure steel weight only (sum per SKU)
+    return { gross: totalWeight, net: steelWeight, orderQty: steelWeight };
   }
   return { gross: item.grossWeightLbs, net: item.containerQtyLbs, orderQty: item.containerQtyLbs };
 }
