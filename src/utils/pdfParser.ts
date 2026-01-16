@@ -70,7 +70,7 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
 
   // Extract finish and warehouse from header
   const finish = extractWuuJingFinish(text);
-  const warehouse = extractWarehouse(text);
+  const { warehouse } = extractWarehouse(text);
 
   // Find all size patterns with imperial dimensions
   // Pattern: thickness*widthMM*lengthMM(imperial) followed by PC and bundle
@@ -171,7 +171,7 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
 
   // Extract finish and warehouse from header
   const finish = extractWuuJingFinish(text);
-  const warehouse = extractWarehouse(text);
+  const { warehouse } = extractWarehouse(text);
 
   // Try OCR-optimized parsing first
   const ocrItems = parseWuuJingOcr(text, poNumber);
@@ -231,7 +231,7 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
 function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
   // Extract finish and warehouse from header
   const finish = extractWuuJingFinish(text);
-  const warehouse = extractWarehouse(text);
+  const { warehouse } = extractWarehouse(text);
 
   // Clean OCR artifacts - common misreads
   const cleanText = text
@@ -591,7 +591,7 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
   const items: PackingListItem[] = [];
 
   // Extract warehouse from destination
-  const warehouse = extractWarehouse(text);
+  const { warehouse } = extractWarehouse(text);
 
   // Track current finish (can change between sections)
   let currentFinish = extractYuenChangFinish(text);
@@ -777,7 +777,16 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
   const totalNetWeightLbs = items.reduce((sum, item) => sum + item.containerQtyLbs, 0);
 
   // Get warehouse from first item or extract from text
-  const warehouse = items[0]?.warehouse || extractWarehouse(packingListPage.text);
+  let warehouse: string;
+  let warehouseDetected: boolean;
+  if (items[0]?.warehouse) {
+    warehouse = items[0].warehouse;
+    warehouseDetected = true; // Item-level warehouse was set during parsing
+  } else {
+    const result = extractWarehouse(packingListPage.text);
+    warehouse = result.warehouse;
+    warehouseDetected = result.detected;
+  }
 
   // Auto-detect PO if not provided or is UNKNOWN
   let finalPoNumber = poNumber;
@@ -801,6 +810,7 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
     totalGrossWeightLbs,
     totalNetWeightLbs,
     warehouse,
+    warehouseDetected,
   };
 }
 
@@ -885,7 +895,16 @@ export async function parsePdfWithOcr(
   const totalNetWeightLbs = items.reduce((sum, item) => sum + item.containerQtyLbs, 0);
 
   // Get warehouse from first item or extract from text
-  const warehouse = items[0]?.warehouse || extractWarehouse(packingListText);
+  let warehouse: string;
+  let warehouseDetected: boolean;
+  if (items[0]?.warehouse) {
+    warehouse = items[0].warehouse;
+    warehouseDetected = true;
+  } else {
+    const result = extractWarehouse(packingListText);
+    warehouse = result.warehouse;
+    warehouseDetected = result.detected;
+  }
 
   // Auto-detect PO if not provided or is UNKNOWN
   let finalPoNumber = poNumber;
@@ -917,6 +936,7 @@ export async function parsePdfWithOcr(
     totalGrossWeightLbs,
     totalNetWeightLbs,
     warehouse,
+    warehouseDetected,
     ocrConfidence: accuracy.averageConfidence,
     ocrWarning,
   };

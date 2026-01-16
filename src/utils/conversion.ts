@@ -246,22 +246,23 @@ export function buildLotSerialNbr(poNumber: string, bundleOrItem: string | numbe
 /**
  * Extract warehouse from destination in packing list
  * Maps destination cities to warehouse codes
+ * Returns { warehouse, detected } where detected is true if found in text
  */
-export function extractWarehouse(text: string): string {
+export function extractWarehouse(text: string): { warehouse: string; detected: boolean } {
   const lowerText = text.toLowerCase();
 
   // Check for destination patterns (case insensitive)
-  if (lowerText.includes('baltimore')) return 'Baltimore';
-  if (lowerText.includes('houston')) return 'Houston';
-  if (lowerText.includes('oakland')) return 'Oakland';
-  if (lowerText.includes('seattle')) return 'Seattle';
-  if (lowerText.includes('kent')) return 'Kent';
-  if (lowerText.includes('tampa')) return 'Tampa';
-  if (lowerText.includes('camden')) return 'Camden';
-  if (lowerText.includes('los angeles') || lowerText.includes('la,') || lowerText.includes('to: la')) return 'LA';
+  if (lowerText.includes('baltimore')) return { warehouse: 'Baltimore', detected: true };
+  if (lowerText.includes('houston')) return { warehouse: 'Houston', detected: true };
+  if (lowerText.includes('oakland')) return { warehouse: 'Oakland', detected: true };
+  if (lowerText.includes('seattle')) return { warehouse: 'Seattle', detected: true };
+  if (lowerText.includes('kent')) return { warehouse: 'Kent', detected: true };
+  if (lowerText.includes('tampa')) return { warehouse: 'Tampa', detected: true };
+  if (lowerText.includes('camden')) return { warehouse: 'Camden', detected: true };
+  if (lowerText.includes('los angeles') || lowerText.includes('la,') || lowerText.includes('to: la')) return { warehouse: 'LA', detected: true };
 
-  // Default warehouse
-  return 'LA';
+  // Default warehouse - not detected
+  return { warehouse: 'LA', detected: false };
 }
 
 /**
