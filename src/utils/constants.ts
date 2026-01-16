@@ -123,7 +123,7 @@ export const MILL_CERT_KEYWORDS = [
 // Source: Chatham Steel (https://www.chathamsteel.com/index.php/steel-plate-sheets/)
 // Formula: Lbs/Pc = (Width × Length / 144) × Lbs/Sq Ft
 export const STEEL_LBS_PER_SQ_FT: Record<string, number> = {
-  // Sheet gauges (cold rolled - 2B/#4 finish) - rarely used for theoretical weight
+  // Sheet gauges (cold rolled - 2B/#3/#4/#8 finish) - rarely used for theoretical weight
   '0.015': 0.630,   // 28 Ga
   '0.018': 0.756,   // 26 Ga
   '0.024': 1.008,   // 24 Ga
