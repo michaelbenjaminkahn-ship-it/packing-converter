@@ -39,7 +39,7 @@ function getSkidWeight(lengthInches: number): number {
 /**
  * Calculate theoretical weights from dimensions using Yoshi's lookup table
  * Formula: Lbs/Pc = (Width × Length / 144) × Lbs/Sq Ft
- * Returns both steel weight (for Order Qty) and total weight with skid (for Gross/Container)
+ * Returns both steel weight (for Order Qty & Container) and total weight with skid (for Gross)
  */
 function calculateTheoreticalWeights(item: PackingListItem): { steelWeight: number; totalWeight: number } {
   // Parse dimensions from inventory ID: "0.188-60__-144__-304/304L-#1____"
@@ -455,10 +455,10 @@ export function EditableResultsTable({
               // Get weight based on weight type selection
               const theoreticalWeights = calculateTheoreticalWeights(item);
               const displayGrossWeight = weightType === 'theoretical'
-                ? theoreticalWeights.totalWeight  // Includes skid for #1 finish
+                ? theoreticalWeights.totalWeight  // Includes skid for #1 finish (what's on the scale)
                 : item.grossWeightLbs;
               const displayContainerWeight = weightType === 'theoretical'
-                ? theoreticalWeights.totalWeight  // Includes skid for #1 finish
+                ? theoreticalWeights.steelWeight  // Pure steel weight only (inventory weight)
                 : item.containerQtyLbs;
 
               // Calculate OrderQty: sum of PURE STEEL weights (no skid) for all items with same inventoryId (SKU)
@@ -540,8 +540,8 @@ export function EditableResultsTable({
           <tfoot className="bg-slate-50 border-t border-slate-200">
             {(() => {
               // Calculate totals based on weight type
-              // Gross/Container: includes skid for #1 finish
-              // Order Qty: pure steel weight only (no skid)
+              // Gross: includes skid for #1 finish (what's on the scale)
+              // Order Qty & Container: pure steel weight only (inventory weight)
               const totalGross = weightType === 'theoretical'
                 ? result.items.reduce((sum, item) => sum + calculateTheoreticalWeights(item).totalWeight, 0)
                 : result.totalGrossWeightLbs;
@@ -549,7 +549,7 @@ export function EditableResultsTable({
                 ? result.items.reduce((sum, item) => sum + calculateTheoreticalWeights(item).steelWeight, 0)
                 : result.totalNetWeightLbs;
               const totalContainer = weightType === 'theoretical'
-                ? result.items.reduce((sum, item) => sum + calculateTheoreticalWeights(item).totalWeight, 0)
+                ? result.items.reduce((sum, item) => sum + calculateTheoreticalWeights(item).steelWeight, 0)
                 : result.totalNetWeightLbs;
               return (
                 <tr>
