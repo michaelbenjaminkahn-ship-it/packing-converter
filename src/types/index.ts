@@ -26,6 +26,7 @@ export interface ParsedPackingList {
   totalGrossWeightLbs: number;
   totalNetWeightLbs: number;
   warehouse?: string;
+  warehouseDetected?: boolean; // true if warehouse was auto-detected from packing list
   containers?: string[]; // List of unique container numbers
 }
 

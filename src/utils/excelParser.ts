@@ -24,6 +24,7 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   // Search ALL sheets for PO number and warehouse (they might be on invoice sheet)
   let extractedPo = '';
   let extractedWarehouse = '';
+  let warehouseDetected = false;
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 }) as unknown[][];
@@ -31,10 +32,14 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
     if (!extractedPo) {
       extractedPo = extractPoFromExcel(data);
     }
-    if (!extractedWarehouse) {
-      extractedWarehouse = extractWarehouseFromExcel(data);
+    if (!warehouseDetected) {
+      const result = extractWarehouseFromExcel(data);
+      if (result.detected) {
+        extractedWarehouse = result.warehouse;
+        warehouseDetected = true;
+      }
     }
-    if (extractedPo && extractedWarehouse) break;
+    if (extractedPo && warehouseDetected) break;
   }
 
   // Try to parse INVOICE sheet for price data (Wuu Jing only)
@@ -64,8 +69,19 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
   const finalPoNumber = validPoNumber || extractedPo || 'UNKNOWN';
 
   // Use warehouse from best sheet, or from any sheet if not found
-  const sheetWarehouse = extractWarehouseFromExcel(bestSheet.data);
-  const warehouse = sheetWarehouse !== 'LA' ? sheetWarehouse : (extractedWarehouse || 'LA');
+  const sheetWarehouseResult = extractWarehouseFromExcel(bestSheet.data);
+  let warehouse: string;
+  let finalWarehouseDetected: boolean;
+  if (sheetWarehouseResult.detected) {
+    warehouse = sheetWarehouseResult.warehouse;
+    finalWarehouseDetected = true;
+  } else if (warehouseDetected) {
+    warehouse = extractedWarehouse;
+    finalWarehouseDetected = true;
+  } else {
+    warehouse = 'LA';
+    finalWarehouseDetected = false;
+  }
 
   // Parse the data based on supplier
   let items: PackingListItem[];
@@ -121,6 +137,7 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
     totalGrossWeightLbs,
     totalNetWeightLbs,
     warehouse,
+    warehouseDetected: finalWarehouseDetected,
     containers,
   };
 }
@@ -258,8 +275,9 @@ function extractPoFromExcel(data: unknown[][]): string {
 
 /**
  * Extract warehouse/destination from Excel header rows
+ * Returns { warehouse, detected } where detected indicates if found in data
  */
-function extractWarehouseFromExcel(data: unknown[][]): string {
+function extractWarehouseFromExcel(data: unknown[][]): { warehouse: string; detected: boolean } {
   // Search first 15 rows for destination
   for (let i = 0; i < Math.min(data.length, 15); i++) {
     const row = data[i];
@@ -268,13 +286,13 @@ function extractWarehouseFromExcel(data: unknown[][]): string {
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
 
     // Use the existing extractWarehouse function
-    const warehouse = extractWarehouse(rowText);
-    if (warehouse !== 'LA') { // LA is the default, so if we found something specific
-      return warehouse;
+    const result = extractWarehouse(rowText);
+    if (result.detected) {
+      return result;
     }
   }
 
-  return 'LA';
+  return { warehouse: 'LA', detected: false };
 }
 
 /**
