@@ -232,9 +232,21 @@ export function EditableResultsTable({
     field: string,
     value: string | number,
     isNumeric: boolean = false,
-    isMonospace: boolean = false
+    isMonospace: boolean = false,
+    decimalPlaces?: number
   ) => {
     const isEditing = editingCell?.row === rowIndex && editingCell?.field === field;
+
+    // Format numeric value with appropriate decimal places
+    const formatValue = (val: string | number) => {
+      if (val === '' || val === undefined) return <span className="text-slate-300">-</span>;
+      if (!isNumeric) return val;
+      const num = Number(val);
+      if (decimalPlaces !== undefined) {
+        return num.toFixed(decimalPlaces);
+      }
+      return num.toLocaleString();
+    };
 
     if (isEditing) {
       if (field === 'inventoryId') {
@@ -282,7 +294,7 @@ export function EditableResultsTable({
         } ${isNumeric ? 'text-right block' : ''}`}
         title="Click to edit"
       >
-        {value === '' || value === undefined ? <span className="text-slate-300">-</span> : isNumeric ? Number(value).toLocaleString() : value}
+        {formatValue(value)}
       </span>
     );
   };
@@ -474,7 +486,7 @@ export function EditableResultsTable({
                     {renderEditableCell(index, 'containerQtyLbs', displayContainerWeight, true)}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'unitCostOverride', unitCost, true)}
+                    {renderEditableCell(index, 'unitCostOverride', unitCost, true, false, 4)}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-500">
                     {renderEditableCell(index, 'heatNumber', item.heatNumber || '')}

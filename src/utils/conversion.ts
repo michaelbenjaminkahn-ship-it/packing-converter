@@ -250,10 +250,15 @@ export function buildLotSerialNbr(poNumber: string, bundleOrItem: string | numbe
 export function extractWarehouse(text: string): string {
   const lowerText = text.toLowerCase();
 
-  // Check for destination patterns
+  // Check for destination patterns (case insensitive)
   if (lowerText.includes('baltimore')) return 'Baltimore';
-  if (lowerText.includes('los angeles') || lowerText.includes('la,') || lowerText.includes('to: la')) return 'LA';
   if (lowerText.includes('houston')) return 'Houston';
+  if (lowerText.includes('oakland')) return 'Oakland';
+  if (lowerText.includes('seattle')) return 'Seattle';
+  if (lowerText.includes('kent')) return 'Kent';
+  if (lowerText.includes('tampa')) return 'Tampa';
+  if (lowerText.includes('camden')) return 'Camden';
+  if (lowerText.includes('los angeles') || lowerText.includes('la,') || lowerText.includes('to: la')) return 'LA';
 
   // Default warehouse
   return 'LA';
