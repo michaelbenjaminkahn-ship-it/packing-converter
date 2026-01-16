@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { ParsedPackingList, PackingListItem } from '../types';
+import { getLbsPerSqFt } from '../utils/constants';
 
-// Steel density: 0.2833 lbs per cubic inch (for 304 stainless)
+// Fallback steel density: 0.2833 lbs per cubic inch (for 304 stainless)
+// Used only when thickness is not in lookup table
 const STEEL_DENSITY_LBS_PER_CUBIC_INCH = 0.2833;
 
 /**
@@ -35,7 +37,8 @@ function getSkidWeight(lengthInches: number): number {
 }
 
 /**
- * Calculate theoretical weight from dimensions
+ * Calculate theoretical weight from dimensions using Yoshi's lookup table
+ * Formula: Lbs/Pc = (Width × Length / 144) × Lbs/Sq Ft
  * For #1 finish items, adds skid weight based on length
  */
 function calculateTheoreticalWeight(item: PackingListItem): number {
@@ -50,10 +53,20 @@ function calculateTheoreticalWeight(item: PackingListItem): number {
   const width = parseFloat(match[2]);
   const length = parseFloat(match[3]);
 
-  // Volume in cubic inches * density * piece count
-  const volumePerPiece = thickness * width * length;
-  const weightPerPiece = volumePerPiece * STEEL_DENSITY_LBS_PER_CUBIC_INCH;
-  const steelWeight = weightPerPiece * item.pieceCount;
+  // Try to use lookup table first
+  const lbsPerSqFt = getLbsPerSqFt(thickness);
+
+  let steelWeight: number;
+  if (lbsPerSqFt !== null) {
+    // Use lookup table: Lbs/Pc = (Width × Length / 144) × Lbs/Sq Ft × pieceCount
+    const sqFt = (width * length) / 144;
+    steelWeight = sqFt * lbsPerSqFt * item.pieceCount;
+  } else {
+    // Fallback to density calculation
+    const volumePerPiece = thickness * width * length;
+    const weightPerPiece = volumePerPiece * STEEL_DENSITY_LBS_PER_CUBIC_INCH;
+    steelWeight = weightPerPiece * item.pieceCount;
+  }
 
   // Add skid weight for #1 finish items
   let totalWeight = steelWeight;

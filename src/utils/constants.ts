@@ -119,6 +119,73 @@ export const MILL_CERT_KEYWORDS = [
   'mechanical properties',
 ];
 
+// Steel weight lookup table: Lbs per Square Foot by thickness (in decimal inches)
+// Source: Chatham Steel (https://www.chathamsteel.com/index.php/steel-plate-sheets/)
+// Formula: Lbs/Pc = (Width × Length / 144) × Lbs/Sq Ft
+export const STEEL_LBS_PER_SQ_FT: Record<string, number> = {
+  '0.188': 8.579,   // 3/16"
+  '0.250': 11.16,   // 1/4"
+  '0.313': 13.75,   // 5/16"
+  '0.375': 16.5,    // 3/8"
+  '0.500': 21.66,   // 1/2"
+  '0.625': 26.83,   // 5/8"
+  '0.750': 32.12,   // 3/4"
+  '0.875': 37.29,   // 7/8"
+  '1.000': 42.67,   // 1"
+  '1.125': 47.83,   // 1-1/8"
+  '1.250': 53,      // 1-1/4"
+  '1.500': 63.34,   // 1-1/2"
+  '1.750': 73.67,   // 1-3/4"
+  '2.000': 84.01,   // 2"
+  '2.500': 105.1,   // 2-1/2"
+  '3.000': 126.3,   // 3"
+  '3.250': 136.6,   // 3-1/4"
+  '3.500': 147.0,   // 3-1/2"
+  '3.750': 157.3,   // 3-3/4"
+  '4.000': 167.6,   // 4"
+};
+
+// Get Lbs/Sq Ft for a given thickness, with interpolation fallback
+export function getLbsPerSqFt(thicknessDecimal: number): number | null {
+  // Try exact match first (formatted to 3 decimal places)
+  const key = thicknessDecimal.toFixed(3);
+  if (STEEL_LBS_PER_SQ_FT[key]) {
+    return STEEL_LBS_PER_SQ_FT[key];
+  }
+
+  // Try with fewer decimals for common values like 1.000
+  const keyShort = thicknessDecimal.toFixed(2).replace(/\.?0+$/, '') || '0';
+  for (const [k, v] of Object.entries(STEEL_LBS_PER_SQ_FT)) {
+    if (parseFloat(k).toFixed(2).replace(/\.?0+$/, '') === keyShort) {
+      return v;
+    }
+  }
+
+  // Linear interpolation between known values
+  const thicknesses = Object.keys(STEEL_LBS_PER_SQ_FT).map(k => parseFloat(k)).sort((a, b) => a - b);
+
+  // Find surrounding values
+  let lower: number | null = null;
+  let upper: number | null = null;
+  for (const t of thicknesses) {
+    if (t <= thicknessDecimal) lower = t;
+    if (t >= thicknessDecimal && upper === null) upper = t;
+  }
+
+  if (lower !== null && upper !== null && lower !== upper) {
+    // Interpolate
+    const lowerLbs = STEEL_LBS_PER_SQ_FT[lower.toFixed(3)] || STEEL_LBS_PER_SQ_FT[lower.toString()];
+    const upperLbs = STEEL_LBS_PER_SQ_FT[upper.toFixed(3)] || STEEL_LBS_PER_SQ_FT[upper.toString()];
+    if (lowerLbs && upperLbs) {
+      const ratio = (thicknessDecimal - lower) / (upper - lower);
+      return lowerLbs + ratio * (upperLbs - lowerLbs);
+    }
+  }
+
+  // No interpolation possible
+  return null;
+}
+
 // Default warehouse
 export const DEFAULT_WAREHOUSE = 'LA';
 
