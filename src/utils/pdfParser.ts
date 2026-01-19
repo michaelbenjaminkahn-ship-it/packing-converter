@@ -1,7 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { PackingListItem, ParsedPackingList, ParsedInvoice, InvoiceLineItem, Supplier } from '../types';
 import { detectSupplier, findPackingListPage } from './detection';
-import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse, extractPoFromBundles, extractPoNumber } from './conversion';
+import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse, extractPoFromBundles, extractPoNumber, extractYeouYihPos } from './conversion';
 import { VENDOR_CODES, GAUGE_TO_DECIMAL } from './constants';
 import { extractTextWithOcr, checkOcrAccuracy, OcrProgress } from './ocr';
 
@@ -42,6 +42,8 @@ export function parsePackingListFromText(
     return parseWuuJingText(text, poNumber);
   } else if (supplier === 'yuen-chang') {
     return parseYuenChangText(text, poNumber);
+  } else if (supplier === 'yeou-yih') {
+    return parseYeouYihText(text, poNumber);
   }
 
   // Generic parsing for unknown supplier
@@ -698,6 +700,98 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
 }
 
 /**
+ * Extract container number from YYS packing list
+ */
+function extractYeouYihContainer(text: string): string {
+  const match = text.match(/CONTAINER\s*NO\.?\s*[:\.]?\s*([A-Z]{4}\d{6,7})/i);
+  return match ? match[1] : '';
+}
+
+/**
+ * Parse Yeou Yih Steel packing list format
+ * Description format: "304/304L 0.750" X 60" X 120"" with piece count like "3PCS"
+ * Weights: Quantity in MT, weights in KGS
+ */
+function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
+  // Extract warehouse from destination
+  const { warehouse } = extractWarehouse(text);
+
+  // Extract container number
+  const containerNumber = extractYeouYihContainer(text);
+
+  // Default finish for YYS is #1 (hot rolled)
+  const finish = '#1';
+
+  // Find all size patterns with decimal inch format
+  // Pattern: 0.750" X 60" X 120" (with optional 304/304L prefix)
+  const sizePattern = /(\d+\.\d+)[""']?\s*[xX]\s*(\d+)[""']?\s*[xX]\s*(\d+)[""']?/g;
+  const sizeMatches = [...text.matchAll(sizePattern)];
+
+  // Find KGS weight patterns: 2,106KGS or 2106KGS
+  const kgsPattern = /([\d,]+)\s*KGS/gi;
+  const kgsMatches = [...text.matchAll(kgsPattern)]
+    .map(m => ({ value: parseFloat(m[1].replace(/,/g, '')), index: m.index! }));
+
+  // Process each size match
+  for (let i = 0; i < sizeMatches.length; i++) {
+    const sizeMatch = sizeMatches[i];
+    const matchIndex = sizeMatch.index!;
+
+    const thickness = parseFloat(sizeMatch[1]);
+    const width = parseFloat(sizeMatch[2]);
+    const length = parseFloat(sizeMatch[3]);
+
+    // Validate dimensions
+    if (isNaN(thickness) || isNaN(width) || isNaN(length)) continue;
+    if (thickness <= 0 || thickness > 4) continue; // Reasonable plate thickness range
+
+    const size = {
+      thickness,
+      width,
+      length,
+      thicknessFormatted: thickness.toFixed(3),
+    };
+
+    // Find piece count near this size (within 100 chars after)
+    const contextText = text.substring(matchIndex, matchIndex + 100);
+    const pcMatch = contextText.match(/(\d+)\s*PCS?/i);
+    const pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
+
+    // Find KGS weights after this size (net and gross)
+    const kgsAfter = kgsMatches.filter(m =>
+      m.index > matchIndex && m.index < matchIndex + 200
+    );
+
+    // Convert KGS to LBS (1 kg = 2.20462 lbs)
+    const netWeightKgs = kgsAfter.length >= 1 ? kgsAfter[0].value : 0;
+    const grossWeightKgs = kgsAfter.length >= 2 ? kgsAfter[1].value : netWeightKgs;
+    const netWeightLbs = Math.round(netWeightKgs * 2.20462);
+    const grossWeightLbs = Math.round(grossWeightKgs * 2.20462);
+
+    // Build lot serial number from PO and line number
+    const lotSerial = buildLotSerialNbr(poNumber, i + 1);
+
+    items.push({
+      lineNumber: i + 1,
+      inventoryId: buildInventoryId(size, 'yeou-yih', finish),
+      lotSerialNbr: lotSerial,
+      pieceCount: pc,
+      heatNumber: '',
+      grossWeightLbs,
+      containerQtyLbs: netWeightLbs,
+      rawSize: sizeMatch[0],
+      warehouse,
+      finish,
+      containerNumber,
+    });
+  }
+
+  return items;
+}
+
+/**
  * Generic text parsing
  */
 function parseGenericText(
@@ -796,9 +890,15 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
     if (bundlePo) {
       finalPoNumber = bundlePo;
     } else {
-      // Try to extract from text (explicit PO patterns)
-      const textPo = extractPoNumber(packingListPage.text);
-      finalPoNumber = textPo || '';
+      // Try Yeou Yih pattern: S####### ######
+      const yysPos = extractYeouYihPos(packingListPage.text);
+      if (yysPos.length > 0) {
+        finalPoNumber = yysPos[0];
+      } else {
+        // Try to extract from text (explicit PO patterns)
+        const textPo = extractPoNumber(packingListPage.text);
+        finalPoNumber = textPo || '';
+      }
     }
   }
 
@@ -1109,6 +1209,101 @@ function parseYuenChangInvoice(text: string): ParsedInvoice | null {
 }
 
 /**
+ * Parse Yeou Yih Steel invoice from PDF text
+ * Extracts price data for matching with packing lists
+ */
+function parseYeouYihInvoice(text: string): ParsedInvoice | null {
+  // Extract PO numbers from section C: "EXCEL METALS LLC PURCHASE ORDER NUMBERS 001715,001857"
+  const poMatch = text.match(/PURCHASE\s+ORDER\s+NUMBERS?\s*:?\s*([\d,\s]+)/i);
+  let poNumbers: string[] = [];
+  if (poMatch) {
+    poNumbers = poMatch[1].split(/[,\s]+/).filter(p => /^\d{3,6}$/.test(p));
+  }
+
+  // If no PO found, try YYS pattern S####### ######
+  if (poNumbers.length === 0) {
+    const yysPos = extractYeouYihPos(text);
+    poNumbers = yysPos;
+  }
+
+  const poNumber = poNumbers.length > 0 ? poNumbers[0].replace(/^0+/, '') : '';
+
+  // Extract invoice number
+  const invoiceMatch = text.match(/INVOICE\s*NO\.?\s*:?\s*([A-Z0-9+\-]+)/i);
+  const invoiceNumber = invoiceMatch ? invoiceMatch[1] : '';
+
+  if (!poNumber) {
+    return null;
+  }
+
+  const items: InvoiceLineItem[] = [];
+
+  // YYS invoice format:
+  // Description with size | Quantity (MT) | Unit Price (USD/MT) | Amount
+  // 304/304L 0.750" X 60" X 120" | 4.212MT | USD2,540 | USD10,698.48
+
+  // Find size patterns with pricing
+  const sizePattern = /(\d+\.\d+)[""']?\s*[xX]\s*(\d+)[""']?\s*[xX]\s*(\d+)[""']?/g;
+  const sizeMatches = [...text.matchAll(sizePattern)];
+
+  for (const sizeMatch of sizeMatches) {
+    const thickness = sizeMatch[1];
+    const width = sizeMatch[2];
+    const length = sizeMatch[3];
+    const matchIndex = sizeMatch.index!;
+
+    // Look for MT quantity and USD price after this size (within 200 chars)
+    const afterText = text.substring(matchIndex, matchIndex + 200);
+
+    // Quantity pattern: 4.212MT or 4.212 MT
+    const qtyMatch = afterText.match(/(\d+\.\d+)\s*MT/i);
+    const qtyMT = qtyMatch ? parseFloat(qtyMatch[1]) : 0;
+
+    // Price pattern: USD2,540 or USD 2,540 or US$2,540
+    const priceMatches = afterText.match(/USD?\$?\s*([\d,]+)/gi);
+
+    if (qtyMT > 0 && priceMatches && priceMatches.length >= 1) {
+      // First USD match is typically the unit price
+      const unitPriceStr = priceMatches[0].replace(/USD?\$?\s*/i, '').replace(/,/g, '');
+      const unitPricePerMT = parseFloat(unitPriceStr);
+
+      if (unitPricePerMT > 0) {
+        // Convert to price per lb
+        // 1 MT = 2204.62 lbs
+        const qtyLbs = qtyMT * 2204.62;
+        const totalPrice = unitPricePerMT * qtyMT;
+        const pricePerLb = Math.round((totalPrice / qtyLbs) * 10000) / 10000;
+
+        // Estimate pieces (we don't have exact count in invoice, will match by size)
+        const pcs = 1;
+
+        items.push({
+          size: `${thickness}" x ${width}" x ${length}"`,
+          pcs,
+          qtyLbs: Math.round(qtyLbs),
+          pricePerPiece: totalPrice,
+          pricePerLb,
+        });
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  const totalValue = items.reduce((sum, item) => sum + item.pricePerPiece, 0);
+
+  return {
+    supplier: 'yeou-yih',
+    poNumber,
+    invoiceNumber,
+    items,
+    totalValue,
+  };
+}
+
+/**
  * Parse invoice from PDF file
  * Returns parsed invoice data if it's an invoice, null if it's a packing list
  */
@@ -1129,6 +1324,10 @@ export async function parseInvoicePdf(file: File): Promise<ParsedInvoice | null>
 
       if (supplier === 'yuen-chang') {
         return parseYuenChangInvoice(pageText);
+      }
+
+      if (supplier === 'yeou-yih') {
+        return parseYeouYihInvoice(pageText);
       }
 
       // Could add Wuu Jing invoice parsing here if needed
@@ -1155,6 +1354,10 @@ export async function parseInvoicePdfWithOcr(
 
       if (supplier === 'yuen-chang') {
         return parseYuenChangInvoice(pageText);
+      }
+
+      if (supplier === 'yeou-yih') {
+        return parseYeouYihInvoice(pageText);
       }
     }
   }

@@ -187,6 +187,40 @@ export function parseThickness(value: string): number | null {
 }
 
 /**
+ * Parse Yeou Yih Steel size format: "304/304L 0.750" X 60" X 120"" or "0.750" X 60" X 120""
+ * Uses decimal thickness in inches (e.g., 0.750, 0.500, 1.000)
+ */
+export function parseYeouYihSize(sizeStr: string): ParsedSize | null {
+  // Normalize separators and clean string
+  const normalized = sizeStr
+    .replace(/\s+/g, ' ')
+    .replace(/[×x]/gi, 'X')
+    .trim();
+
+  // Pattern: decimal_thickness" X width" X length"
+  // Examples: "0.750" X 60" X 120"", "1.000" X 60" X 240""
+  // May have 304/304L prefix and/or PCS suffix
+  const match = normalized.match(/(\d+\.\d+)[""']?\s*X\s*(\d+)[""']?\s*X\s*(\d+)/i);
+
+  if (match) {
+    const thickness = parseFloat(match[1]);
+    const width = parseFloat(match[2]);
+    const length = parseFloat(match[3]);
+
+    if (!isNaN(thickness) && !isNaN(width) && !isNaN(length) && thickness > 0 && thickness <= 4) {
+      return {
+        thickness,
+        width,
+        length,
+        thicknessFormatted: formatThickness(thickness),
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Parse a size string and return dimensions based on supplier
  */
 export function parseSize(sizeStr: string, supplier: Supplier): ParsedSize | null {
@@ -194,10 +228,12 @@ export function parseSize(sizeStr: string, supplier: Supplier): ParsedSize | nul
     return parseWuuJingSize(sizeStr);
   } else if (supplier === 'yuen-chang') {
     return parseYuenChangSize(sizeStr);
+  } else if (supplier === 'yeou-yih') {
+    return parseYeouYihSize(sizeStr);
   }
 
-  // Try both formats for unknown supplier
-  return parseWuuJingSize(sizeStr) || parseYuenChangSize(sizeStr);
+  // Try all formats for unknown supplier
+  return parseWuuJingSize(sizeStr) || parseYuenChangSize(sizeStr) || parseYeouYihSize(sizeStr);
 }
 
 /**
@@ -324,4 +360,36 @@ export function extractMultiplePos(text: string): string[] {
 
   const uniquePos = [...new Set(matches.map(m => m[1]))];
   return uniquePos;
+}
+
+/**
+ * Extract PO numbers from Yeou Yih Steel packing lists
+ * Format: "S2509021 001715" where 001715 is the PO number
+ * Returns array of unique PO numbers found
+ */
+export function extractYeouYihPos(text: string): string[] {
+  // Pattern: S####### followed by a 6-digit PO number
+  const pattern = /S\d{7}\s+(\d{6})/g;
+  const matches = [...text.matchAll(pattern)];
+
+  // Extract and dedupe PO numbers, removing leading zeros
+  const uniquePos = [...new Set(matches.map(m => m[1].replace(/^0+/, '') || m[1]))];
+  return uniquePos;
+}
+
+/**
+ * Extract sales order to PO mapping from Yeou Yih Steel packing lists
+ * Format: "S2509021 001715" -> { salesOrder: "S2509021", poNumber: "1715" }
+ */
+export function extractYeouYihSalesOrderMapping(text: string): Map<string, string> {
+  const pattern = /S(\d{7})\s+(\d{6})/g;
+  const matches = [...text.matchAll(pattern)];
+
+  const mapping = new Map<string, string>();
+  for (const match of matches) {
+    const salesOrder = `S${match[1]}`;
+    const poNumber = match[2].replace(/^0+/, '') || match[2];
+    mapping.set(salesOrder, poNumber);
+  }
+  return mapping;
 }

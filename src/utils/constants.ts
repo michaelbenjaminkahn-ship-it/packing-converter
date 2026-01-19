@@ -5,6 +5,7 @@ export const MT_TO_LBS = 2204.62;
 export const VENDOR_CODES = {
   'wuu-jing': 'V005006',
   'yuen-chang': 'V005010',
+  'yeou-yih': 'V005007',
   'unknown': '',
 } as const;
 
@@ -12,6 +13,7 @@ export const VENDOR_CODES = {
 export const FINISH_CODES = {
   'wuu-jing': '#1____',    // Hot rolled
   'yuen-chang': '2B____',  // Cold rolled
+  'yeou-yih': '#1____',    // Hot rolled plate
   'unknown': '#1____',     // Default to hot rolled
 } as const;
 
@@ -19,6 +21,7 @@ export const FINISH_CODES = {
 export const SUPPLIER_KEYWORDS = {
   'wuu-jing': ['wuu jing', 'wuu-jing', 'wuujing', '五井', 'wu jing', 'wu-jing'],
   'yuen-chang': ['yuen chang', 'yuen-chang', 'yuenchang', '元昌'],
+  'yeou-yih': ['yeou yih', 'yeou-yih', 'yeouyih', 'yih steel', 'yeou yih steel'],
 } as const;
 
 // Gauge to decimal conversion (for Yuen Chang cold rolled)
