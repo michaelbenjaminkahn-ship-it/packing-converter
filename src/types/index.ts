@@ -1,4 +1,4 @@
-export type Supplier = 'wuu-jing' | 'yuen-chang' | 'unknown';
+export type Supplier = 'wuu-jing' | 'yuen-chang' | 'yeou-yih' | 'unknown';
 
 export interface PackingListItem {
   lineNumber: number;
