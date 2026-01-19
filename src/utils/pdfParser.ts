@@ -2,7 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { PackingListItem, ParsedPackingList, ParsedInvoice, InvoiceLineItem, Supplier } from '../types';
 import { detectSupplier, findPackingListPage } from './detection';
 import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse, extractPoFromBundles, extractPoNumber, extractYeouYihPos } from './conversion';
-import { VENDOR_CODES, GAUGE_TO_DECIMAL } from './constants';
+import { VENDOR_CODES, GAUGE_TO_DECIMAL, getLbsPerSqFt } from './constants';
 import { extractTextWithOcr, checkOcrAccuracy, OcrProgress } from './ocr';
 
 // Configure PDF.js worker - must match pdfjs-dist package version (4.8.69)
@@ -708,28 +708,141 @@ function extractYeouYihContainer(text: string): string {
 }
 
 /**
+ * Clean OCR artifacts from YYS text
+ * Handles common OCR misreads for YYS documents
+ */
+function cleanYeouYihOcrText(text: string): string {
+  return text
+    // Fix common digit misreads
+    .replace(/[oO](?=\d)/g, '0')     // O before digit -> 0
+    .replace(/(?<=\d)[oO]/g, '0')    // O after digit -> 0
+    .replace(/(?<=\d)[lI]/g, '1')    // l or I after digit -> 1
+    .replace(/[|](?=\d)/g, '1')      // | before digit -> 1
+    .replace(/(?<=\d)[|]/g, '1')     // | after digit -> 1
+    .replace(/(?<=\d)[sS](?=\d)/g, '5') // S between digits -> 5
+    .replace(/(?<=\d)[Bb](?=\d)/g, '8') // B between digits -> 8
+    // Fix common unit misreads
+    .replace(/\bKG5\b/gi, 'KGS')     // KG5 -> KGS
+    .replace(/\bKG\$/gi, 'KGS')      // KG$ -> KGS
+    .replace(/\bK6S\b/gi, 'KGS')     // K6S -> KGS
+    .replace(/\bPC5\b/gi, 'PCS')     // PC5 -> PCS
+    .replace(/\bPG5\b/gi, 'PCS')     // PG5 -> PCS
+    .replace(/\bMI\b/gi, 'MT')       // MI -> MT (metric ton)
+    // Fix X separator misreads
+    .replace(/\s*[xX×]\s*/g, ' X ')  // Normalize X separator
+    .replace(/\s*[Xx]\s*(?=\d)/g, ' X ') // x before digit
+    // Fix quote misreads
+    .replace(/[''`]/g, '"')          // Various quotes -> "
+    // Normalize whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Validate YYS plate dimensions
+ * Returns true if dimensions are reasonable for steel plate
+ */
+function isValidYeouYihDimensions(thickness: number, width: number, length: number): boolean {
+  // YYS sells heavier plate: 1/2" to 2" (0.375 to 2.0)
+  if (thickness < 0.375 || thickness > 2.5) return false;
+
+  // Common widths: 48", 60", rarely others
+  if (width < 36 || width > 72) return false;
+
+  // Common lengths: 96", 120", 144", 240"
+  if (length < 72 || length > 300) return false;
+
+  // Width should be less than length
+  if (width > length) return false;
+
+  return true;
+}
+
+/**
+ * Calculate theoretical weight for validation
+ * Uses Chatham pounds per square foot
+ */
+function calculateTheoreticalWeight(thickness: number, width: number, length: number, pieceCount: number): number {
+  const lbsPerSqFt = getLbsPerSqFt(thickness);
+  if (!lbsPerSqFt) return 0;
+
+  const sqFt = (width * length) / 144;
+  return Math.round(sqFt * lbsPerSqFt * pieceCount);
+}
+
+/**
+ * Validate extracted weight against theoretical weight
+ * Returns confidence level: 'high', 'medium', 'low'
+ */
+function validateYeouYihWeight(
+  extractedWeightLbs: number,
+  thickness: number,
+  width: number,
+  length: number,
+  pieceCount: number
+): 'high' | 'medium' | 'low' {
+  const theoreticalWeight = calculateTheoreticalWeight(thickness, width, length, pieceCount);
+  if (theoreticalWeight === 0) return 'medium'; // Can't validate
+
+  const ratio = extractedWeightLbs / theoreticalWeight;
+
+  // Within 10% = high confidence
+  if (ratio >= 0.9 && ratio <= 1.1) return 'high';
+
+  // Within 25% = medium confidence (could be skid weight, etc.)
+  if (ratio >= 0.75 && ratio <= 1.25) return 'medium';
+
+  // Outside 25% = low confidence
+  return 'low';
+}
+
+/**
  * Parse Yeou Yih Steel packing list format
  * Description format: "304/304L 0.750" X 60" X 120"" with piece count like "3PCS"
  * Weights: Quantity in MT, weights in KGS
  */
 function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
-  const items: PackingListItem[] = [];
+  // Clean OCR artifacts first
+  const cleanText = cleanYeouYihOcrText(text);
 
   // Extract warehouse from destination
-  const { warehouse } = extractWarehouse(text);
+  const { warehouse } = extractWarehouse(cleanText);
 
   // Extract container number
-  const containerNumber = extractYeouYihContainer(text);
+  const containerNumber = extractYeouYihContainer(cleanText);
 
   // Default finish for YYS is #1 (hot rolled)
   const finish = '#1';
 
+  // Try standard parsing first
+  let parsedItems = parseYeouYihTextStandard(cleanText, poNumber, warehouse, containerNumber, finish);
+
+  // If standard parsing failed or got few items, try OCR-optimized parsing
+  if (parsedItems.length === 0) {
+    parsedItems = parseYeouYihTextOcr(cleanText, poNumber, warehouse, containerNumber, finish);
+  }
+
+  return parsedItems;
+}
+
+/**
+ * Standard YYS parsing for clean text
+ */
+function parseYeouYihTextStandard(
+  text: string,
+  poNumber: string,
+  warehouse: string,
+  containerNumber: string,
+  finish: string
+): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
   // Find all size patterns with decimal inch format
   // Pattern: 0.750" X 60" X 120" (with optional 304/304L prefix)
-  const sizePattern = /(\d+\.\d+)[""']?\s*[xX]\s*(\d+)[""']?\s*[xX]\s*(\d+)[""']?/g;
+  const sizePattern = /(\d+\.\d+)[""']?\s*X\s*(\d+)[""']?\s*X\s*(\d+)[""']?/gi;
   const sizeMatches = [...text.matchAll(sizePattern)];
 
-  // Find KGS weight patterns: 2,106KGS or 2106KGS
+  // Find KGS weight patterns: 2,106KGS or 2106KGS or 2,106 KGS
   const kgsPattern = /([\d,]+)\s*KGS/gi;
   const kgsMatches = [...text.matchAll(kgsPattern)]
     .map(m => ({ value: parseFloat(m[1].replace(/,/g, '')), index: m.index! }));
@@ -745,7 +858,7 @@ function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
 
     // Validate dimensions
     if (isNaN(thickness) || isNaN(width) || isNaN(length)) continue;
-    if (thickness <= 0 || thickness > 4) continue; // Reasonable plate thickness range
+    if (!isValidYeouYihDimensions(thickness, width, length)) continue;
 
     const size = {
       thickness,
@@ -757,7 +870,10 @@ function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
     // Find piece count near this size (within 100 chars after)
     const contextText = text.substring(matchIndex, matchIndex + 100);
     const pcMatch = contextText.match(/(\d+)\s*PCS?/i);
-    const pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
+    let pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
+
+    // Validate piece count (reasonable range for steel bundles)
+    if (pc < 1 || pc > 50) pc = 1;
 
     // Find KGS weights after this size (net and gross)
     const kgsAfter = kgsMatches.filter(m =>
@@ -767,8 +883,26 @@ function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
     // Convert KGS to LBS (1 kg = 2.20462 lbs)
     const netWeightKgs = kgsAfter.length >= 1 ? kgsAfter[0].value : 0;
     const grossWeightKgs = kgsAfter.length >= 2 ? kgsAfter[1].value : netWeightKgs;
-    const netWeightLbs = Math.round(netWeightKgs * 2.20462);
-    const grossWeightLbs = Math.round(grossWeightKgs * 2.20462);
+    let netWeightLbs = Math.round(netWeightKgs * 2.20462);
+    let grossWeightLbs = Math.round(grossWeightKgs * 2.20462);
+
+    // Validate weights against theoretical
+    const weightConfidence = validateYeouYihWeight(netWeightLbs, thickness, width, length, pc);
+
+    // If weight validation is low, try to use theoretical weight as fallback
+    if (weightConfidence === 'low' && netWeightLbs > 0) {
+      const theoreticalWeight = calculateTheoreticalWeight(thickness, width, length, pc);
+      if (theoreticalWeight > 0) {
+        // Log warning but use extracted weight (user can verify)
+        console.warn(`YYS OCR: Weight mismatch for ${thickness}"x${width}"x${length}" - extracted: ${netWeightLbs} lbs, theoretical: ${theoreticalWeight} lbs`);
+      }
+    }
+
+    // If no weights found, calculate theoretical
+    if (netWeightLbs === 0) {
+      netWeightLbs = calculateTheoreticalWeight(thickness, width, length, pc);
+      grossWeightLbs = Math.round(netWeightLbs * 1.01); // Add ~1% for skid
+    }
 
     // Build lot serial number from PO and line number
     const lotSerial = buildLotSerialNbr(poNumber, i + 1);
@@ -786,6 +920,140 @@ function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
       finish,
       containerNumber,
     });
+  }
+
+  return items;
+}
+
+/**
+ * OCR-optimized YYS parsing - more flexible patterns for noisy text
+ */
+function parseYeouYihTextOcr(
+  text: string,
+  poNumber: string,
+  warehouse: string,
+  containerNumber: string,
+  finish: string
+): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
+  // More flexible size patterns for OCR
+  const sizePatterns = [
+    // Standard: 0.750" X 60" X 120"
+    /(\d+\.\d+)[""']?\s*X\s*(\d+)[""']?\s*X\s*(\d+)/gi,
+    // Without quotes: 0.750 X 60 X 120
+    /(\d+\.\d{2,3})\s*X\s*(\d{2})\s*X\s*(\d{2,3})/gi,
+    // With spaces around X: 0.750 " X 60 " X 120
+    /(\d+\.\d+)\s*"?\s*X\s*(\d+)\s*"?\s*X\s*(\d+)/gi,
+    // OCR might split: 0 . 750 X 60 X 120
+    /(\d+)\s*\.\s*(\d{2,3})\s*X\s*(\d{2})\s*X\s*(\d{2,3})/gi,
+  ];
+
+  // Weight patterns - more flexible for OCR
+  const weightPatterns = [
+    /([\d,]+)\s*KGS/gi,           // 2,106KGS
+    /([\d,]+)\s*KG/gi,            // 2,106KG
+    /([\d,]+)\s*K\s*G\s*S/gi,     // 2,106 K G S (OCR spacing)
+    /(\d+,\d{3})/g,               // Just numbers with comma (likely KGS)
+  ];
+
+  // Try each size pattern
+  for (const sizePattern of sizePatterns) {
+    const sizeMatches = [...text.matchAll(sizePattern)];
+
+    for (let i = 0; i < sizeMatches.length; i++) {
+      const sizeMatch = sizeMatches[i];
+      const matchIndex = sizeMatch.index!;
+
+      let thickness: number;
+      let width: number;
+      let length: number;
+
+      // Handle split decimal pattern (0 . 750 format)
+      if (sizeMatch.length === 5) {
+        thickness = parseFloat(`${sizeMatch[1]}.${sizeMatch[2]}`);
+        width = parseFloat(sizeMatch[3]);
+        length = parseFloat(sizeMatch[4]);
+      } else {
+        thickness = parseFloat(sizeMatch[1]);
+        width = parseFloat(sizeMatch[2]);
+        length = parseFloat(sizeMatch[3]);
+      }
+
+      // Validate dimensions
+      if (isNaN(thickness) || isNaN(width) || isNaN(length)) continue;
+      if (!isValidYeouYihDimensions(thickness, width, length)) continue;
+
+      // Check if we already have this size (avoid duplicates from multiple patterns)
+      const isDuplicate = items.some(item => {
+        const existingSize = item.rawSize;
+        return Math.abs(parseFloat(existingSize.split('X')[0]) - thickness) < 0.01;
+      });
+      if (isDuplicate) continue;
+
+      const size = {
+        thickness,
+        width,
+        length,
+        thicknessFormatted: thickness.toFixed(3),
+      };
+
+      // Find piece count
+      const contextText = text.substring(matchIndex, matchIndex + 150);
+      const pcMatch = contextText.match(/(\d+)\s*PCS?/i);
+      let pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
+      if (pc < 1 || pc > 50) pc = 1;
+
+      // Find weights using multiple patterns
+      let netWeightKgs = 0;
+      let grossWeightKgs = 0;
+
+      for (const weightPattern of weightPatterns) {
+        const afterText = text.substring(matchIndex, matchIndex + 250);
+        const weightMatches = [...afterText.matchAll(weightPattern)]
+          .map(m => parseFloat(m[1].replace(/,/g, '')))
+          .filter(w => w > 100 && w < 50000); // Reasonable KGS range
+
+        if (weightMatches.length >= 2) {
+          netWeightKgs = weightMatches[0];
+          grossWeightKgs = weightMatches[1];
+          break;
+        } else if (weightMatches.length === 1) {
+          netWeightKgs = weightMatches[0];
+          grossWeightKgs = weightMatches[0];
+          break;
+        }
+      }
+
+      // Convert KGS to LBS
+      let netWeightLbs = Math.round(netWeightKgs * 2.20462);
+      let grossWeightLbs = Math.round(grossWeightKgs * 2.20462);
+
+      // If no weights found, use theoretical
+      if (netWeightLbs === 0) {
+        netWeightLbs = calculateTheoreticalWeight(thickness, width, length, pc);
+        grossWeightLbs = Math.round(netWeightLbs * 1.01);
+      }
+
+      const lotSerial = buildLotSerialNbr(poNumber, items.length + 1);
+
+      items.push({
+        lineNumber: items.length + 1,
+        inventoryId: buildInventoryId(size, 'yeou-yih', finish),
+        lotSerialNbr: lotSerial,
+        pieceCount: pc,
+        heatNumber: '',
+        grossWeightLbs,
+        containerQtyLbs: netWeightLbs,
+        rawSize: `${thickness.toFixed(3)}" X ${width}" X ${length}"`,
+        warehouse,
+        finish,
+        containerNumber,
+      });
+    }
+
+    // If we found items with this pattern, stop trying other patterns
+    if (items.length > 0) break;
   }
 
   return items;
