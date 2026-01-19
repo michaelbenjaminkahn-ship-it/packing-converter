@@ -84,6 +84,23 @@ export function scorePageAsPackingList(text: string): number {
     score += 15;
   }
 
+  // Yeou Yih specific patterns
+  // Decimal inch format: 0.750" X 60" X 120"
+  const yysDecimalPattern = /\d+\.\d+[""']?\s*[xX]\s*\d+[""']?\s*[xX]\s*\d+/g;
+  const yysMatches = text.match(yysDecimalPattern);
+  if (yysMatches && yysMatches.length >= 3) {
+    score += 30;
+  } else if (yysMatches && yysMatches.length >= 1) {
+    score += 15;
+  }
+
+  // YYS sales order + PO pattern: S2509021 001715
+  const yysSalesOrderPattern = /S\d{7}\s+\d{6}/g;
+  const yysOrderMatches = text.match(yysSalesOrderPattern);
+  if (yysOrderMatches && yysOrderMatches.length >= 1) {
+    score += 20;
+  }
+
   return score;
 }
 
@@ -112,6 +129,14 @@ export function detectSupplier(text: string): Supplier {
   if (lowerText.includes('ga*') || lowerText.includes('ga(') ||
       lowerText.includes('ga x') || /\d+ga\s+x?\s*\d+/.test(lowerText)) {
     return 'yuen-chang';
+  }
+
+  // Yeou Yih uses decimal inch format (0.750" X 60" X 120") and "HOT ROLLED STAINLESS STEEL PLATE"
+  // Also look for their sales order pattern: S#######
+  if (lowerText.includes('hot rolled stainless steel plate') ||
+      /\d+\.\d+"\s*x\s*\d+"\s*x\s*\d+/i.test(text) ||
+      /s\d{7}\s+\d{6}/.test(lowerText)) {
+    return 'yeou-yih';
   }
 
   return 'unknown';

@@ -9,6 +9,7 @@ export function ResultsTable({ result, warehouse = 'LA' }: ResultsTableProps) {
   const supplierNames = {
     'wuu-jing': 'Wuu Jing',
     'yuen-chang': 'Yuen Chang',
+    'yeou-yih': 'Yeou Yih Steel',
     unknown: 'Unknown Supplier',
   };
 

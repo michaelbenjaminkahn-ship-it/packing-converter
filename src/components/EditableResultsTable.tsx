@@ -119,6 +119,7 @@ export function EditableResultsTable({
   const supplierNames = {
     'wuu-jing': 'Wuu Jing',
     'yuen-chang': 'Yuen Chang',
+    'yeou-yih': 'Yeou Yih Steel',
     unknown: 'Unknown Supplier',
   };
 

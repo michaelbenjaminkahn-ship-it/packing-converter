@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import { PackingListItem, ParsedPackingList, Supplier } from '../types';
 import { detectSupplier, scorePageAsPackingList } from './detection';
-import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse } from './conversion';
+import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse, parseYeouYihSize } from './conversion';
 import { VENDOR_CODES } from './constants';
 
 /**
@@ -91,17 +91,25 @@ export async function parseExcel(file: File, poNumber: string): Promise<ParsedPa
     items = parseYuenChangExcel(bestSheet.data, finalPoNumber);
   } else if (supplier === 'wuu-jing') {
     items = parseWuuJingExcel(bestSheet.data, finalPoNumber);
+  } else if (supplier === 'yeou-yih') {
+    items = parseYeouYihExcel(bestSheet.data, finalPoNumber);
   } else {
-    // Unknown supplier - try both parsers and use whichever gets more items
+    // Unknown supplier - try all parsers and use whichever gets most items
     const wuuJingItems = parseWuuJingExcel(bestSheet.data, finalPoNumber);
     const yuenChangItems = parseYuenChangExcel(bestSheet.data, finalPoNumber);
+    const yeouYihItems = parseYeouYihExcel(bestSheet.data, finalPoNumber);
 
-    if (yuenChangItems.length >= wuuJingItems.length && yuenChangItems.length > 0) {
-      items = yuenChangItems;
-      detectedSupplier = 'yuen-chang';
-    } else if (wuuJingItems.length > 0) {
-      items = wuuJingItems;
-      detectedSupplier = 'wuu-jing';
+    // Find the parser with most items
+    const results = [
+      { items: wuuJingItems, supplier: 'wuu-jing' as Supplier },
+      { items: yuenChangItems, supplier: 'yuen-chang' as Supplier },
+      { items: yeouYihItems, supplier: 'yeou-yih' as Supplier },
+    ];
+    const best = results.reduce((a, b) => a.items.length >= b.items.length ? a : b);
+
+    if (best.items.length > 0) {
+      items = best.items;
+      detectedSupplier = best.supplier;
     } else {
       items = [];
     }
@@ -655,6 +663,206 @@ function parseWuuJingInvoice(data: unknown[][]): Map<string, InvoicePriceData> {
   }
 
   return prices;
+}
+
+/**
+ * Parse Yeou Yih Steel Excel format
+ * Columns: Packing No., Description, Quantity, Net Weight, Gross Weight, Meas.
+ * Description format: "304/304L 0.750" X 60" X 120"" with pieces like "3PCS" on separate line
+ */
+function parseYeouYihExcel(data: unknown[][], poNumber: string): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
+  // Find header row - look for keywords typical of YYS format
+  const headerRowIndex = findHeaderRow(data, ['description', 'quantity', 'weight']);
+  if (headerRowIndex === -1) {
+    // Try alternate detection by looking for the YYS format directly
+    return parseYeouYihExcelFlexible(data, poNumber);
+  }
+
+  const headerRow = data[headerRowIndex] || [];
+  const headers = headerRow.map(h => String(h ?? '').toLowerCase().trim());
+
+  // Map column indices for YYS
+  const colMap = {
+    packingNo: findColumnIndex(headers, ['packing no', 'packing', 'no', 'no.']),
+    description: findColumnIndex(headers, ['description', 'desc']),
+    quantity: findColumnIndex(headers, ['quantity', 'qty']),
+    netWeight: findColumnIndex(headers, ['net weight', 'net', 'netweight']),
+    grossWeight: findColumnIndex(headers, ['gross weight', 'gross', 'grossweight']),
+  };
+
+  // Extract container number from header area
+  const containerNumber = extractYeouYihContainerFromExcel(data, headerRowIndex);
+
+  // Extract warehouse from header area
+  const warehouseResult = extractWarehouseFromExcel(data);
+
+  // Default finish for YYS
+  const finish = '#1';
+
+  // Parse data rows
+  let lineNumber = 0;
+  for (let i = headerRowIndex + 1; i < data.length; i++) {
+    const row = data[i];
+    if (!row || !Array.isArray(row) || row.length === 0) continue;
+
+    const rowText = row.map(cell => String(cell ?? '')).join(' ');
+
+    // Skip total rows and empty rows
+    if (rowText.toLowerCase().includes('total') || rowText.toLowerCase().includes('bundles')) continue;
+
+    // Get description - may contain size and pieces
+    const description = colMap.description >= 0 ? String(row[colMap.description] || '') : '';
+
+    // Try to parse size from description
+    const size = parseYeouYihSize(description);
+    if (!size) continue;
+
+    // Extract piece count from description or row
+    const pcMatch = rowText.match(/(\d+)\s*PCS?/i);
+    const pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
+
+    // Get weights - YYS Excel shows weights in various formats
+    let netWeight = 0;
+    let grossWeight = 0;
+
+    if (colMap.netWeight >= 0) {
+      const netStr = String(row[colMap.netWeight] || '').replace(/[,\s]/g, '');
+      netWeight = parseFloat(netStr) || 0;
+    }
+
+    if (colMap.grossWeight >= 0) {
+      const grossStr = String(row[colMap.grossWeight] || '').replace(/[,\s]/g, '');
+      grossWeight = parseFloat(grossStr) || 0;
+    }
+
+    // Determine unit and convert if needed
+    // YYS shows weights in KGS or with unit suffix
+    const netText = colMap.netWeight >= 0 ? String(row[colMap.netWeight] || '') : '';
+    const isKgs = /kg/i.test(netText) || /gs$/i.test(netText) || netWeight > 1000;
+    const isMT = /mt/i.test(netText) || (netWeight > 0 && netWeight < 100);
+
+    if (isKgs) {
+      // Convert KGS to LBS
+      netWeight = Math.round(netWeight * 2.20462);
+      grossWeight = Math.round(grossWeight * 2.20462);
+    } else if (isMT) {
+      // Convert MT to LBS
+      netWeight = mtToLbs(netWeight);
+      grossWeight = mtToLbs(grossWeight);
+    }
+    // If weights look like they're already in LBS (100-50000 range), keep as-is
+
+    if (grossWeight === 0) grossWeight = netWeight;
+
+    lineNumber++;
+    const lotSerial = buildLotSerialNbr(poNumber, lineNumber);
+
+    items.push({
+      lineNumber,
+      inventoryId: buildInventoryId(size, 'yeou-yih', finish),
+      lotSerialNbr: lotSerial,
+      pieceCount: pc,
+      heatNumber: '',
+      grossWeightLbs: Math.round(grossWeight),
+      containerQtyLbs: Math.round(netWeight),
+      rawSize: description,
+      finish,
+      containerNumber,
+      warehouse: warehouseResult.detected ? warehouseResult.warehouse : undefined,
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Extract container number from YYS Excel header area
+ */
+function extractYeouYihContainerFromExcel(data: unknown[][], beforeRow: number): string {
+  for (let i = 0; i < Math.min(data.length, beforeRow + 5); i++) {
+    const row = data[i];
+    if (!row || !Array.isArray(row)) continue;
+
+    const rowText = row.map(cell => String(cell ?? '')).join(' ');
+    const match = rowText.match(/CONTAINER\s*NO\.?\s*[:\.]?\s*([A-Z]{4}\d{6,7})/i);
+    if (match) return match[1];
+  }
+  return '';
+}
+
+/**
+ * Flexible YYS Excel parsing when headers aren't clearly detected
+ */
+function parseYeouYihExcelFlexible(data: unknown[][], poNumber: string): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
+  // Look for rows containing YYS size patterns
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    if (!row || !Array.isArray(row) || row.length < 3) continue;
+
+    // Look for size pattern in any cell
+    for (let j = 0; j < row.length; j++) {
+      const cellStr = String(row[j] || '');
+      const size = parseYeouYihSize(cellStr);
+
+      if (size) {
+        // Found a size - extract other values from row
+        const rowText = row.map(cell => String(cell ?? '')).join(' ');
+
+        // Extract piece count
+        const pcMatch = rowText.match(/(\d+)\s*PCS?/i);
+        const pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
+
+        // Look for numbers in the row that could be weights
+        const numbers = row
+          .filter((cell, idx) => idx !== j && !isNaN(parseFloat(String(cell).replace(/,/g, ''))))
+          .map(cell => parseFloat(String(cell).replace(/,/g, '')))
+          .filter(n => n > 0);
+
+        // Assume last two numbers are weights
+        let netWeight = 0;
+        let grossWeight = 0;
+
+        if (numbers.length >= 2) {
+          // Check if these are MT (small numbers) or KGS (larger numbers)
+          const lastNum = numbers[numbers.length - 1];
+          const secondLastNum = numbers[numbers.length - 2];
+
+          if (lastNum < 50 && secondLastNum < 50) {
+            // Likely MT
+            netWeight = mtToLbs(secondLastNum);
+            grossWeight = mtToLbs(lastNum);
+          } else if (lastNum > 500) {
+            // Likely KGS
+            netWeight = Math.round(secondLastNum * 2.20462);
+            grossWeight = Math.round(lastNum * 2.20462);
+          } else {
+            // Assume LBS
+            netWeight = Math.round(secondLastNum);
+            grossWeight = Math.round(lastNum);
+          }
+        }
+
+        items.push({
+          lineNumber: items.length + 1,
+          inventoryId: buildInventoryId(size, 'yeou-yih', '#1'),
+          lotSerialNbr: buildLotSerialNbr(poNumber, items.length + 1),
+          pieceCount: pc,
+          heatNumber: '',
+          grossWeightLbs: grossWeight || netWeight,
+          containerQtyLbs: netWeight,
+          rawSize: cellStr,
+          finish: '#1',
+        });
+        break; // Only one size per row
+      }
+    }
+  }
+
+  return items;
 }
 
 /**
