@@ -223,19 +223,49 @@ export function parseYeouYihSize(sizeStr: string): ParsedSize | null {
 }
 
 /**
+ * Check if a size string has NP (No Paper) notation and strip it
+ * Returns { cleanedSize, noPaper } where noPaper is true if NP was found
+ * NP means "No Paper" - typically sheet material (99% of cases) with no paper wrap
+ */
+export function stripNoPaperNotation(sizeStr: string): { cleanedSize: string; noPaper: boolean } {
+  // Match NP at the end of the string, possibly with whitespace before it
+  const npMatch = sizeStr.match(/\s+NP\s*$/i);
+  if (npMatch) {
+    return {
+      cleanedSize: sizeStr.slice(0, npMatch.index).trim(),
+      noPaper: true,
+    };
+  }
+  return { cleanedSize: sizeStr, noPaper: false };
+}
+
+/**
  * Parse a size string and return dimensions based on supplier
+ * Handles NP (No Paper) notation at the end of size strings
  */
 export function parseSize(sizeStr: string, supplier: Supplier): ParsedSize | null {
+  // Strip NP notation before parsing
+  const { cleanedSize, noPaper } = stripNoPaperNotation(sizeStr);
+
+  let result: ParsedSize | null = null;
+
   if (supplier === 'wuu-jing') {
-    return parseWuuJingSize(sizeStr);
+    result = parseWuuJingSize(cleanedSize);
   } else if (supplier === 'yuen-chang') {
-    return parseYuenChangSize(sizeStr);
+    result = parseYuenChangSize(cleanedSize);
   } else if (supplier === 'yeou-yih') {
-    return parseYeouYihSize(sizeStr);
+    result = parseYeouYihSize(cleanedSize);
+  } else {
+    // Try all formats for unknown supplier
+    result = parseWuuJingSize(cleanedSize) || parseYuenChangSize(cleanedSize) || parseYeouYihSize(cleanedSize);
   }
 
-  // Try all formats for unknown supplier
-  return parseWuuJingSize(sizeStr) || parseYuenChangSize(sizeStr) || parseYeouYihSize(sizeStr);
+  // Add noPaper flag if detected
+  if (result && noPaper) {
+    result.noPaper = true;
+  }
+
+  return result;
 }
 
 /**
