@@ -6,6 +6,7 @@ import {
   FRACTION_TO_DECIMAL,
   FINISH_CODES,
 } from './constants';
+import { getMappedInventoryId, getThicknessDisplay } from '../config/inventoryMappings';
 
 /**
  * Convert metric tons to pounds
@@ -242,8 +243,19 @@ export function parseSize(sizeStr: string, supplier: Supplier): ParsedSize | nul
  * @param size - Parsed size dimensions
  * @param supplier - Supplier name (used for default finish)
  * @param finish - Optional explicit finish override (e.g., "#1", "2B", "#4")
+ *
+ * Checks manual mappings first (src/config/inventoryMappings.ts)
  */
 export function buildInventoryId(size: ParsedSize, supplier: Supplier, finish?: string): string {
+  // Check for manual mapping first
+  const mapping = getMappedInventoryId(size.thickness, size.width, size.length);
+  if (mapping) {
+    return mapping.inventoryId;
+  }
+
+  // Check for thickness display override
+  const thicknessDisplay = getThicknessDisplay(size.thickness) || size.thicknessFormatted;
+
   let finishCode: string;
   if (finish) {
     // Use explicit finish - add trailing underscores to normalize length
@@ -252,7 +264,7 @@ export function buildInventoryId(size: ParsedSize, supplier: Supplier, finish?: 
     // Use supplier default
     finishCode = FINISH_CODES[supplier] || FINISH_CODES['wuu-jing'];
   }
-  return `${size.thicknessFormatted}-${size.width}__-${size.length}__-304/304L-${finishCode}`;
+  return `${thicknessDisplay}-${size.width}__-${size.length}__-304/304L-${finishCode}`;
 }
 
 /**
