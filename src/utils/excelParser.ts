@@ -379,6 +379,7 @@ function parseWuuJingExcel(data: unknown[][], poNumber: string): PackingListItem
       rawSize: sizeStr,
       finish,
       containerNumber: containerNo,
+      noPaper: size.noPaper,
     });
   }
 
@@ -489,6 +490,7 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
       rawSize: sizeStr,
       finish: currentFinish,
       containerNumber: currentContainer,
+      noPaper: size.noPaper,
     });
   }
 
@@ -592,6 +594,7 @@ function parseExcelWithoutHeaders(
             grossWeightLbs: Math.round(grossWeight),
             containerQtyLbs: Math.round(netWeight),
             rawSize: cellStr,
+            noPaper: size.noPaper,
           });
         }
         break;
@@ -771,6 +774,7 @@ function parseYeouYihExcel(data: unknown[][], poNumber: string): PackingListItem
       finish,
       containerNumber,
       warehouse: warehouseResult.detected ? warehouseResult.warehouse : undefined,
+      noPaper: size.noPaper,
     });
   }
 
@@ -856,6 +860,7 @@ function parseYeouYihExcelFlexible(data: unknown[][], poNumber: string): Packing
           containerQtyLbs: netWeight,
           rawSize: cellStr,
           finish: '#1',
+          noPaper: size.noPaper,
         });
         break; // Only one size per row
       }

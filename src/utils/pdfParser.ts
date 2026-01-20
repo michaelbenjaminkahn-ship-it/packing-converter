@@ -238,6 +238,7 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
         rawSize: sizeStr,
         warehouse,
         finish,
+        noPaper: size.noPaper,
       });
     }
   }
@@ -1129,6 +1130,7 @@ function parseGenericText(
       grossWeightLbs: parseFloat(numbers[numbers.length - 1] || '0'),
       containerQtyLbs: parseFloat(numbers[numbers.length - 2] || '0'),
       rawSize: sizeMatch[0],
+      noPaper: size.noPaper,
     });
   }
 
