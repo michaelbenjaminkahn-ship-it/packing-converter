@@ -80,6 +80,53 @@ export function findClosestMatch(id: string): string | null {
 }
 
 /**
+ * Find inventory ID by size dimensions
+ * Searches uploaded inventory list for an ID matching the given dimensions
+ * Handles different thickness precision (e.g., finds 0.4375 when searching for 0.438)
+ *
+ * @param thickness - Thickness in decimal inches
+ * @param width - Width in inches
+ * @param length - Length in inches
+ * @param finish - Optional finish code to match
+ * @returns Matching inventory ID from uploaded list, or null if not found
+ */
+export function findInventoryIdBySize(
+  thickness: number,
+  width: number,
+  length: number,
+  finish?: string
+): string | null {
+  if (inventoryIds.size === 0) return null;
+
+  // Search uploaded inventory IDs for a match with this size
+  // Allow for different thickness precisions (3 or 4 decimal places)
+  for (const invId of inventoryIds) {
+    // Parse the inventory ID
+    const match = invId.match(/^([\d.]+)-(\d+)__-(\d+)__-304\/304L-(.+)$/);
+    if (!match) continue;
+
+    const [, invThickness, invWidth, invLength, invFinish] = match;
+    const invThicknessNum = parseFloat(invThickness);
+
+    // Check if dimensions match
+    if (parseInt(invWidth) !== width) continue;
+    if (parseInt(invLength) !== length) continue;
+
+    // Check thickness - allow for small precision differences
+    // e.g., 0.4375 vs 0.438 (difference < 0.001)
+    if (Math.abs(invThicknessNum - thickness) < 0.001) {
+      // If finish specified, check it matches
+      if (finish && !invFinish.startsWith(finish.replace(/_+$/, ''))) {
+        continue;
+      }
+      return invId;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Get count of loaded inventory IDs
  */
 export function getInventoryCount(): number {
