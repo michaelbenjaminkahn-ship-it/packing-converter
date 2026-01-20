@@ -6,6 +6,8 @@ import {
   FRACTION_TO_DECIMAL,
   FINISH_CODES,
 } from './constants';
+import { getMappedInventoryId, getThicknessDisplay } from '../config/inventoryMappings';
+import { findInventoryIdBySize } from './inventoryLookup';
 
 /**
  * Convert metric tons to pounds
@@ -242,17 +244,37 @@ export function parseSize(sizeStr: string, supplier: Supplier): ParsedSize | nul
  * @param size - Parsed size dimensions
  * @param supplier - Supplier name (used for default finish)
  * @param finish - Optional explicit finish override (e.g., "#1", "2B", "#4")
+ *
+ * Lookup order:
+ * 1. Uploaded inventory list (from "Upload Inventory List" button)
+ * 2. Manual mappings (src/config/inventoryMappings.ts)
+ * 3. Auto-generated from size dimensions
  */
 export function buildInventoryId(size: ParsedSize, supplier: Supplier, finish?: string): string {
+  // Determine finish code for lookups
   let finishCode: string;
   if (finish) {
-    // Use explicit finish - add trailing underscores to normalize length
     finishCode = finish;
   } else {
-    // Use supplier default
     finishCode = FINISH_CODES[supplier] || FINISH_CODES['wuu-jing'];
   }
-  return `${size.thicknessFormatted}-${size.width}__-${size.length}__-304/304L-${finishCode}`;
+
+  // 1. Check uploaded inventory list first (highest priority)
+  const uploadedMatch = findInventoryIdBySize(size.thickness, size.width, size.length, finishCode);
+  if (uploadedMatch) {
+    return uploadedMatch;
+  }
+
+  // 2. Check for manual mapping
+  const mapping = getMappedInventoryId(size.thickness, size.width, size.length);
+  if (mapping) {
+    return mapping.inventoryId;
+  }
+
+  // 3. Auto-generate: Check for thickness display override
+  const thicknessDisplay = getThicknessDisplay(size.thickness) || size.thicknessFormatted;
+
+  return `${thicknessDisplay}-${size.width}__-${size.length}__-304/304L-${finishCode}`;
 }
 
 /**

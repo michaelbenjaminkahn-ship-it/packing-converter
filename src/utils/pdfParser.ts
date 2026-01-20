@@ -80,21 +80,21 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
 
   // Find all bundle patterns: 001837-01, 001772-02, or 001739-4-01 (3-part format)
   // 3-part format: PPPPPP-X-NN where P=PO, X=order/section, N=bundle
+  // 2-part format: PPPPPP-NN where P=PO, N=bundle
   const bundlePattern3 = /(\d{6})-(\d+)-(\d{2})/g;
-  const bundlePattern2 = /(\d{6})-(\d{2})/g;
+  const bundlePattern2 = /(\d{6})-(\d{2})(?!-\d)/g; // Negative lookahead to avoid matching start of 3-part
 
   // Find all weight patterns (decimal numbers between 0.5 and 50 MT)
   const weightPattern = /\b(\d{1,2}\.\d{3})\b/g;
 
-  // Extract all matches - prefer 3-part format
+  // Extract all matches - collect both formats and merge by position
   const sizeMatches = [...text.matchAll(sizePattern)];
-  const bundleMatches3 = [...text.matchAll(bundlePattern3)];
-  const bundleMatches2 = [...text.matchAll(bundlePattern2)];
+  const bundleMatches3 = [...text.matchAll(bundlePattern3)].map(m => ({ match: m, format: 3 as const }));
+  const bundleMatches2 = [...text.matchAll(bundlePattern2)].map(m => ({ match: m, format: 2 as const }));
 
-  // Use 3-part matches if available, otherwise fall back to 2-part
-  const bundleMatches = bundleMatches3.length > 0
-    ? bundleMatches3.map(m => ({ match: m, format: 3 as const }))
-    : bundleMatches2.map(m => ({ match: m, format: 2 as const }));
+  // Merge and sort by position in text
+  const bundleMatches = [...bundleMatches3, ...bundleMatches2]
+    .sort((a, b) => (a.match.index || 0) - (b.match.index || 0));
   const weightMatches = [...text.matchAll(weightPattern)]
     .map(m => ({ value: parseFloat(m[1]), index: m.index! }))
     .filter(w => w.value >= 0.5 && w.value <= 50);
@@ -270,15 +270,15 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
 
   // Find bundle number patterns: 001812-01, 001812-02, or 001739-4-01 (3-part format)
   // Bundle numbers are the most reliable anchor in OCR text
+  // 2-part uses negative lookahead to avoid matching start of 3-part bundles
   const bundlePattern3 = /(\d{6})-(\d+)-(\d{2})/g;
-  const bundlePattern2 = /(\d{6})-(\d{2})/g;
-  const bundleMatches3 = [...cleanText.matchAll(bundlePattern3)];
-  const bundleMatches2 = [...cleanText.matchAll(bundlePattern2)];
+  const bundlePattern2 = /(\d{6})-(\d{2})(?!-\d)/g;
+  const bundleMatches3 = [...cleanText.matchAll(bundlePattern3)].map(m => ({ match: m, format: 3 as const }));
+  const bundleMatches2 = [...cleanText.matchAll(bundlePattern2)].map(m => ({ match: m, format: 2 as const }));
 
-  // Use 3-part matches if available, otherwise fall back to 2-part
-  const bundleMatches = bundleMatches3.length > 0
-    ? bundleMatches3.map(m => ({ match: m, format: 3 as const }))
-    : bundleMatches2.map(m => ({ match: m, format: 2 as const }));
+  // Merge both formats and sort by position
+  const bundleMatches = [...bundleMatches3, ...bundleMatches2]
+    .sort((a, b) => (a.match.index || 0) - (b.match.index || 0));
 
   // If we have bundle numbers, use bundle-anchored parsing (primary strategy for OCR)
   if (bundleMatches.length > 0) {
