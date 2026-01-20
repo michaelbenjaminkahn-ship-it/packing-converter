@@ -52,20 +52,22 @@ export const GAUGE_TO_DECIMAL: Record<string, number> = {
 
 // MM to decimal conversion (for Wuu Jing hot rolled)
 export const MM_TO_DECIMAL: Record<string, number> = {
-  '4.76': 0.188,
+  '4.76': 0.1875,
   '6.35': 0.250,
-  '7.94': 0.313,
+  '7.94': 0.3125,
   '9.53': 0.375,
+  '11.11': 0.4375,  // 7/16"
   '12.70': 0.500,
   '12.7': 0.500,
 };
 
 // Fraction to decimal conversion
 export const FRACTION_TO_DECIMAL: Record<string, number> = {
-  '3/16': 0.188,
+  '3/16': 0.1875,
   '1/4': 0.250,
-  '5/16': 0.313,
+  '5/16': 0.3125,
   '3/8': 0.375,
+  '7/16': 0.4375,
   '1/2': 0.500,
   '5/8': 0.625,
   '3/4': 0.750,
@@ -142,10 +144,11 @@ export const STEEL_LBS_PER_SQ_FT: Record<string, number> = {
   '0.135': 5.670,   // 10 Ga
   '0.187': 7.871,   // 7 Ga
   // Plate thicknesses (hot rolled - #1 finish) - primary use case
-  '0.188': 8.579,   // 3/16"
+  '0.1875': 8.579,  // 3/16"
   '0.250': 11.16,   // 1/4"
-  '0.313': 13.75,   // 5/16"
+  '0.3125': 13.75,  // 5/16"
   '0.375': 16.5,    // 3/8"
+  '0.4375': 19.08,  // 7/16"
   '0.500': 21.66,   // 1/2"
   '0.625': 26.83,   // 5/8"
   '0.750': 32.12,   // 3/4"
@@ -166,10 +169,16 @@ export const STEEL_LBS_PER_SQ_FT: Record<string, number> = {
 
 // Get Lbs/Sq Ft for a given thickness, with interpolation fallback
 export function getLbsPerSqFt(thicknessDecimal: number): number | null {
-  // Try exact match first (formatted to 3 decimal places)
-  const key = thicknessDecimal.toFixed(3);
-  if (STEEL_LBS_PER_SQ_FT[key]) {
-    return STEEL_LBS_PER_SQ_FT[key];
+  // Try exact match first (formatted to 4 decimal places)
+  const key4 = thicknessDecimal.toFixed(4);
+  if (STEEL_LBS_PER_SQ_FT[key4]) {
+    return STEEL_LBS_PER_SQ_FT[key4];
+  }
+
+  // Try with 3 decimal places for backwards compatibility
+  const key3 = thicknessDecimal.toFixed(3);
+  if (STEEL_LBS_PER_SQ_FT[key3]) {
+    return STEEL_LBS_PER_SQ_FT[key3];
   }
 
   // Try with fewer decimals for common values like 1.000
@@ -193,8 +202,8 @@ export function getLbsPerSqFt(thicknessDecimal: number): number | null {
 
   if (lower !== null && upper !== null && lower !== upper) {
     // Interpolate
-    const lowerLbs = STEEL_LBS_PER_SQ_FT[lower.toFixed(3)] || STEEL_LBS_PER_SQ_FT[lower.toString()];
-    const upperLbs = STEEL_LBS_PER_SQ_FT[upper.toFixed(3)] || STEEL_LBS_PER_SQ_FT[upper.toString()];
+    const lowerLbs = STEEL_LBS_PER_SQ_FT[lower.toFixed(4)] || STEEL_LBS_PER_SQ_FT[lower.toFixed(3)] || STEEL_LBS_PER_SQ_FT[lower.toString()];
+    const upperLbs = STEEL_LBS_PER_SQ_FT[upper.toFixed(4)] || STEEL_LBS_PER_SQ_FT[upper.toFixed(3)] || STEEL_LBS_PER_SQ_FT[upper.toString()];
     if (lowerLbs && upperLbs) {
       const ratio = (thicknessDecimal - lower) / (upper - lower);
       return lowerLbs + ratio * (upperLbs - lowerLbs);

@@ -29,11 +29,11 @@ export function generateId(): string {
 }
 
 /**
- * Format thickness to 3 decimal places
- * Example: 0.188 -> "0.188", 0.25 -> "0.250"
+ * Format thickness to 4 decimal places
+ * Example: 0.1875 -> "0.1875", 0.4375 -> "0.4375", 0.25 -> "0.2500"
  */
 export function formatThickness(thickness: number): string {
-  return thickness.toFixed(3);
+  return thickness.toFixed(4);
 }
 
 /**
@@ -257,13 +257,18 @@ export function buildInventoryId(size: ParsedSize, supplier: Supplier, finish?: 
 
 /**
  * Build lot/serial number from PO number and bundle/item identifier
- * For Wuu Jing: Use bundle number directly (e.g., "001837-01")
+ * For Wuu Jing: Use bundle number directly (e.g., "001837-01" or "001739-4-01")
  * For Yuen Chang: Use item identifier directly (e.g., "WM006")
  */
 export function buildLotSerialNbr(poNumber: string, bundleOrItem: string | number, _supplier?: Supplier): string {
   const bundleStr = String(bundleOrItem);
 
-  // If it's already a full bundle number (like "001837-01"), use as-is
+  // If it's already a full 3-part bundle number (like "001739-4-01"), use as-is
+  if (bundleStr.match(/^\d{6}-\d+-\d{2}$/)) {
+    return bundleStr;
+  }
+
+  // If it's already a full 2-part bundle number (like "001837-01"), use as-is
   if (bundleStr.match(/^\d{6}-\d{2}$/)) {
     return bundleStr;
   }
@@ -326,12 +331,19 @@ export function extractPoNumber(text: string): string {
 
 /**
  * Extract PO number from Wuu Jing bundle numbers
- * Bundle format: 001812-01 -> PO# 1812
+ * Bundle format: 001812-01 or 001739-4-01 -> PO# 1812 or 1739
  * Returns the most common PO found, or empty string if none found
  */
 export function extractPoFromBundles(text: string): string {
-  const bundlePattern = /(\d{6})-\d{2}/g;
-  const matches = [...text.matchAll(bundlePattern)];
+  // Match both 2-part (001812-01) and 3-part (001739-4-01) formats
+  const bundlePattern3 = /(\d{6})-\d+-\d{2}/g;
+  const bundlePattern2 = /(\d{6})-\d{2}/g;
+
+  // Try 3-part format first
+  let matches = [...text.matchAll(bundlePattern3)];
+  if (matches.length === 0) {
+    matches = [...text.matchAll(bundlePattern2)];
+  }
 
   if (matches.length === 0) {
     return '';
