@@ -80,6 +80,52 @@ export function findClosestMatch(id: string): string | null {
 }
 
 /**
+ * Parse an inventory ID into its components
+ * Handles multiple formats:
+ *   - "0.090-48  -120  -304/304L-2B" (user's actual format with spaces)
+ *   - "0.4375-60__-360__-304/304L-#1____" (legacy format with underscores)
+ *   - ".4375-60  -360  -304/304L-#1" (leading dot without zero)
+ */
+function parseInventoryId(invId: string): {
+  thickness: number;
+  width: number;
+  length: number;
+  material: string;
+  finish: string;
+} | null {
+  // Normalize: trim and collapse multiple spaces
+  const normalized = invId.trim().replace(/\s+/g, ' ');
+
+  // Try multiple regex patterns to handle different formats
+  // Pattern 1: User's format with spaces: "0.090-48  -120  -304/304L-2B"
+  // Pattern 2: Legacy format with underscores: "0.4375-60__-360__-304/304L-#1____"
+  const patterns = [
+    // User's format: thickness-width -length -material-finish (with optional spaces)
+    /^(\.?\d*\.?\d+)-(\d+)\s*-(\d+)\s*-(30[46]\/30[46]L|316\/316L)-(.+)$/,
+    // Legacy format with double underscores
+    /^(\.?\d*\.?\d+)-(\d+)__-(\d+)__-(30[46]\/30[46]L|316\/316L)-(.+)$/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match) {
+      const [, thicknessStr, widthStr, lengthStr, material, finish] = match;
+      // Handle thickness that starts with "." (e.g., ".4375" -> "0.4375")
+      const thicknessNorm = thicknessStr.startsWith('.') ? '0' + thicknessStr : thicknessStr;
+      return {
+        thickness: parseFloat(thicknessNorm),
+        width: parseInt(widthStr),
+        length: parseInt(lengthStr),
+        material,
+        finish: finish.replace(/_+$/, '').trim(), // Remove trailing underscores
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Find inventory ID by size dimensions
  * Searches uploaded inventory list for an ID matching the given dimensions
  * Handles different thickness precision (e.g., finds 0.4375 when searching for 0.438)
@@ -98,28 +144,35 @@ export function findInventoryIdBySize(
 ): string | null {
   if (inventoryIds.size === 0) return null;
 
+  // Normalize the finish for comparison (remove trailing underscores)
+  const finishNorm = finish?.replace(/_+$/, '').trim();
+
   // Search uploaded inventory IDs for a match with this size
   // Allow for different thickness precisions (3 or 4 decimal places)
   for (const invId of inventoryIds) {
-    // Parse the inventory ID
-    const match = invId.match(/^([\d.]+)-(\d+)__-(\d+)__-304\/304L-(.+)$/);
-    if (!match) continue;
-
-    const [, invThickness, invWidth, invLength, invFinish] = match;
-    const invThicknessNum = parseFloat(invThickness);
+    // Parse the inventory ID using flexible parser
+    const parsed = parseInventoryId(invId);
+    if (!parsed) continue;
 
     // Check if dimensions match
-    if (parseInt(invWidth) !== width) continue;
-    if (parseInt(invLength) !== length) continue;
+    if (parsed.width !== width) continue;
+    if (parsed.length !== length) continue;
 
     // Check thickness - allow for small precision differences
     // e.g., 0.4375 vs 0.438 (difference < 0.001)
-    if (Math.abs(invThicknessNum - thickness) < 0.001) {
-      // If finish specified, check it matches
-      if (finish && !invFinish.startsWith(finish.replace(/_+$/, ''))) {
-        continue;
+    if (Math.abs(parsed.thickness - thickness) < 0.001) {
+      // If finish specified, check it matches (case-insensitive, ignore trailing underscores)
+      if (finishNorm && parsed.finish.toLowerCase() !== finishNorm.toLowerCase()) {
+        // Also try starts-with for partial matches like "#1" matching "#1____"
+        if (!parsed.finish.toLowerCase().startsWith(finishNorm.toLowerCase())) {
+          continue;
+        }
       }
-      return invId;
+      // Return standardized format (not the uploaded format)
+      // Format: "0.090-48__-120__-304/304L-2B____"
+      const thicknessStr = parsed.thickness.toString();
+      const finishPadded = parsed.finish.endsWith('____') ? parsed.finish : parsed.finish + '____';
+      return `${thicknessStr}-${parsed.width}__-${parsed.length}__-${parsed.material}-${finishPadded}`;
     }
   }
 
