@@ -78,15 +78,23 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
   // Pattern: thickness*widthMM*lengthMM(imperial) followed by PC and bundle
   const sizePattern = /(\d+\.?\d*)\s*\*\s*(\d+)\s*MM\s*\*\s*(\d+)\s*MM\s*\(([^)]+)\)/gi;
 
-  // Find all bundle patterns: 001837-01, 001772-02, etc.
-  const bundlePattern = /(\d{6})-(\d{2})/g;
+  // Find all bundle patterns: 001837-01, 001772-02, or 001739-4-01 (3-part format)
+  // 3-part format: PPPPPP-X-NN where P=PO, X=order/section, N=bundle
+  const bundlePattern3 = /(\d{6})-(\d+)-(\d{2})/g;
+  const bundlePattern2 = /(\d{6})-(\d{2})/g;
 
   // Find all weight patterns (decimal numbers between 0.5 and 50 MT)
   const weightPattern = /\b(\d{1,2}\.\d{3})\b/g;
 
-  // Extract all matches
+  // Extract all matches - prefer 3-part format
   const sizeMatches = [...text.matchAll(sizePattern)];
-  const bundleMatches = [...text.matchAll(bundlePattern)];
+  const bundleMatches3 = [...text.matchAll(bundlePattern3)];
+  const bundleMatches2 = [...text.matchAll(bundlePattern2)];
+
+  // Use 3-part matches if available, otherwise fall back to 2-part
+  const bundleMatches = bundleMatches3.length > 0
+    ? bundleMatches3.map(m => ({ match: m, format: 3 as const }))
+    : bundleMatches2.map(m => ({ match: m, format: 2 as const }));
   const weightMatches = [...text.matchAll(weightPattern)]
     .map(m => ({ value: parseFloat(m[1]), index: m.index! }))
     .filter(w => w.value >= 0.5 && w.value <= 50);
@@ -118,15 +126,26 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
       thickness,
       width,
       length,
-      thicknessFormatted: thickness.toFixed(3),
+      thicknessFormatted: thickness.toFixed(4),
     };
 
     // Find corresponding bundle number (look for bundles after this size in the text)
     const matchIndex = sizeMatch.index!;
-    const bundleMatch = bundleMatches.find(b =>
-      b.index! > matchIndex && b.index! < matchIndex + 300
+    const bundleMatchObj = bundleMatches.find(b =>
+      b.match.index! > matchIndex && b.match.index! < matchIndex + 300
     );
-    const bundleNo = bundleMatch ? `${bundleMatch[1]}-${bundleMatch[2]}` : `${poNumber.padStart(6, '0')}-${String(i + 1).padStart(2, '0')}`;
+    let bundleNo: string;
+    if (bundleMatchObj) {
+      if (bundleMatchObj.format === 3) {
+        // 3-part format: 001739-4-01
+        bundleNo = `${bundleMatchObj.match[1]}-${bundleMatchObj.match[2]}-${bundleMatchObj.match[3]}`;
+      } else {
+        // 2-part format: 001739-01
+        bundleNo = `${bundleMatchObj.match[1]}-${bundleMatchObj.match[2]}`;
+      }
+    } else {
+      bundleNo = `${poNumber.padStart(6, '0')}-${String(i + 1).padStart(2, '0')}`;
+    }
 
     // Find PC (piece count) - typically a small number (1-20) before the bundle
     // Look for pattern: ) PC BUNDLE
@@ -134,9 +153,10 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
     const pc = pcMatch ? parseInt(pcMatch[1], 10) : 1;
 
     // Find weights after the bundle number
+    const bundleIndex = bundleMatchObj?.match.index || matchIndex;
     const weightsAfter = weightMatches.filter(w =>
-      w.index > (bundleMatch?.index || matchIndex) &&
-      w.index < (bundleMatch?.index || matchIndex) + 100
+      w.index > bundleIndex &&
+      w.index < bundleIndex + 100
     );
 
     // Weights come in pairs: net, gross
@@ -248,10 +268,17 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
     .replace(/\bMIVI\b/gi, 'MM') // Another common OCR for MM
     .replace(/\s+/g, ' '); // normalize whitespace
 
-  // Find bundle number pattern: 001812-01, 001812-02, etc.
+  // Find bundle number patterns: 001812-01, 001812-02, or 001739-4-01 (3-part format)
   // Bundle numbers are the most reliable anchor in OCR text
-  const bundlePattern = /(\d{6})-(\d{2})/g;
-  const bundleMatches = [...cleanText.matchAll(bundlePattern)];
+  const bundlePattern3 = /(\d{6})-(\d+)-(\d{2})/g;
+  const bundlePattern2 = /(\d{6})-(\d{2})/g;
+  const bundleMatches3 = [...cleanText.matchAll(bundlePattern3)];
+  const bundleMatches2 = [...cleanText.matchAll(bundlePattern2)];
+
+  // Use 3-part matches if available, otherwise fall back to 2-part
+  const bundleMatches = bundleMatches3.length > 0
+    ? bundleMatches3.map(m => ({ match: m, format: 3 as const }))
+    : bundleMatches2.map(m => ({ match: m, format: 2 as const }));
 
   // If we have bundle numbers, use bundle-anchored parsing (primary strategy for OCR)
   if (bundleMatches.length > 0) {
@@ -320,23 +347,31 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
       };
 
       // Find the bundle number closest to this size match
-      const nearestBundle = bundleMatches.find(b =>
-        b.index! > matchIndex && b.index! < matchIndex + 200
+      const nearestBundleObj = bundleMatches.find(b =>
+        b.match.index! > matchIndex && b.match.index! < matchIndex + 200
       );
 
       // Find piece count before the bundle number
       const nearestPc = pcMatches.find(p =>
-        p.index! > matchIndex && p.index! < (nearestBundle?.index || matchIndex + 100)
+        p.index! > matchIndex && p.index! < (nearestBundleObj?.match.index || matchIndex + 100)
       );
 
       // Find weights after the bundle number
+      const nearestBundleIndex = nearestBundleObj?.match.index || matchIndex;
       const weightsAfter = weightMatches.filter(w =>
-        w.index > (nearestBundle?.index || matchIndex) &&
-        w.index < (nearestBundle?.index || matchIndex) + 150
+        w.index > nearestBundleIndex &&
+        w.index < nearestBundleIndex + 150
       );
 
       lineNum++;
-      const bundleNo = nearestBundle ? `${nearestBundle[1]}-${nearestBundle[2]}` : `${poNumber.padStart(6, '0')}-${String(lineNum).padStart(2, '0')}`;
+      let bundleNo: string;
+      if (nearestBundleObj) {
+        bundleNo = nearestBundleObj.format === 3
+          ? `${nearestBundleObj.match[1]}-${nearestBundleObj.match[2]}-${nearestBundleObj.match[3]}`
+          : `${nearestBundleObj.match[1]}-${nearestBundleObj.match[2]}`;
+      } else {
+        bundleNo = `${poNumber.padStart(6, '0')}-${String(lineNum).padStart(2, '0')}`;
+      }
       const pc = nearestPc ? parseInt(nearestPc[1], 10) : 1;
 
       // Get the last two weights (net and gross) - they're usually at the end
@@ -421,14 +456,14 @@ function isValidSheetSize(thickness: number, width: number, length: number): boo
 
 /**
  * Primary Wuu Jing parsing for OCR - uses bundle numbers as anchors
- * Bundle numbers (001812-01) are more reliably detected by OCR than full size patterns
+ * Bundle numbers (001812-01 or 001739-4-01) are more reliably detected by OCR than full size patterns
  */
 function parseWuuJingByBundles(
   text: string,
   _poNumber: string,
   finish: string,
   warehouse: string,
-  bundleMatches: RegExpMatchArray[]
+  bundleMatches: Array<{ match: RegExpMatchArray; format: 2 | 3 }>
 ): PackingListItem[] {
   const items: PackingListItem[] = [];
 
@@ -475,8 +510,12 @@ function parseWuuJingByBundles(
 
   // Process each bundle number as an anchor
   for (let i = 0; i < bundleMatches.length; i++) {
-    const bundleMatch = bundleMatches[i];
-    const bundleNo = `${bundleMatch[1]}-${bundleMatch[2]}`;
+    const bundleMatchObj = bundleMatches[i];
+    const bundleMatch = bundleMatchObj.match;
+    // Construct bundle number based on format (2-part or 3-part)
+    const bundleNo = bundleMatchObj.format === 3
+      ? `${bundleMatch[1]}-${bundleMatch[2]}-${bundleMatch[3]}`
+      : `${bundleMatch[1]}-${bundleMatch[2]}`;
     const bundleIndex = bundleMatch.index!;
 
     // Look for imperial dimension before this bundle (within 400 chars)
@@ -568,7 +607,7 @@ function parseWuuJingByBundles(
  * Format thickness helper for OCR parser
  */
 function formatThickness(thickness: number): string {
-  return thickness.toFixed(3);
+  return thickness.toFixed(4);
 }
 
 /**
@@ -651,7 +690,7 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
       thickness,
       width,
       length,
-      thicknessFormatted: thickness.toFixed(3),
+      thicknessFormatted: thickness.toFixed(4),
     };
 
     // Find the nearest item code (WM###, XL###, YF###, YN###, etc.) before this size
@@ -864,7 +903,7 @@ function parseYeouYihTextStandard(
       thickness,
       width,
       length,
-      thicknessFormatted: thickness.toFixed(3),
+      thicknessFormatted: thickness.toFixed(4),
     };
 
     // Find piece count near this size (within 100 chars after)
@@ -995,7 +1034,7 @@ function parseYeouYihTextOcr(
         thickness,
         width,
         length,
-        thicknessFormatted: thickness.toFixed(3),
+        thicknessFormatted: thickness.toFixed(4),
       };
 
       // Find piece count
@@ -1045,7 +1084,7 @@ function parseYeouYihTextOcr(
         heatNumber: '',
         grossWeightLbs,
         containerQtyLbs: netWeightLbs,
-        rawSize: `${thickness.toFixed(3)}" X ${width}" X ${length}"`,
+        rawSize: `${thickness.toFixed(4)}" X ${width}" X ${length}"`,
         warehouse,
         finish,
         containerNumber,
@@ -1684,18 +1723,18 @@ function normalizeSize(size: string): string {
   const width = parseInt(match[2], 10);
   const length = parseInt(match[3], 10);
 
-  return `${thickness.toFixed(3)}-${width}-${length}`;
+  return `${thickness.toFixed(4)}-${width}-${length}`;
 }
 
 /**
  * Normalize inventory ID or rawSize for matching
- * "0.188-48__-120__-304/304L-#1___" -> "0.188-48-120"
+ * "0.1875-48__-120__-304/304L-#1___" -> "0.1875-48-120"
  */
 function normalizeInventorySize(inventoryId: string, rawSize: string): string {
-  // Try inventory ID first: "0.188-48__-120__-304/304L-#1___"
+  // Try inventory ID first: "0.1875-48__-120__-304/304L-#1___"
   const invMatch = inventoryId.match(/^([\d.]+)-(\d+)__-(\d+)__-/);
   if (invMatch) {
-    return `${parseFloat(invMatch[1]).toFixed(3)}-${invMatch[2]}-${invMatch[3]}`;
+    return `${parseFloat(invMatch[1]).toFixed(4)}-${invMatch[2]}-${invMatch[3]}`;
   }
 
   // Try rawSize: "3/16"*48"*120"" or similar
@@ -1708,7 +1747,7 @@ function normalizeInventorySize(inventoryId: string, rawSize: string): string {
     } else {
       thickness = parseFloat(sizeMatch[1]);
     }
-    return `${thickness.toFixed(3)}-${sizeMatch[2]}-${sizeMatch[3]}`;
+    return `${thickness.toFixed(4)}-${sizeMatch[2]}-${sizeMatch[3]}`;
   }
 
   return '';
