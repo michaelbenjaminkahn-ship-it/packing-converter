@@ -123,6 +123,9 @@ export function toAcumaticaRows(
   // Use pre-calculated totals if provided, otherwise calculate from this packing list
   const orderQtyBySku = preCalculatedOrderQty || calculateOrderQtyBySku(packingList, weightType);
 
+  // Strip any suffix (e.g., "-5") from PO number for the Order Number column
+  const orderNumber = packingList.poNumber.replace(/-\d+$/, '');
+
   return packingList.items.map((item) => {
     const weights = getWeight(item, weightType);
     // Unit cost: blank by default - price data comes from invoice, not packing list
@@ -139,7 +142,7 @@ export function toAcumaticaRows(
     const orderLineNbr = item.orderLineNbrOverride ?? 0;
 
     return {
-      orderNumber: packingList.poNumber,
+      orderNumber,
       vendor: packingList.vendorCode,
       inventoryId: item.inventoryId,
       lotSerialNbr: item.lotSerialNbr,
