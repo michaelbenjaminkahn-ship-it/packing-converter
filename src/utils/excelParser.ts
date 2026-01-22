@@ -202,7 +202,8 @@ function findPackingListSheet(workbook: XLSX.WorkBook): { name: string; data: un
 
 /**
  * Extract PO number from Excel header rows
- * Looks for patterns like "ORDER NO.: 001772" or "EXCEL ORDER # 001726"
+ * Looks for patterns like "ORDER NO.: 001737-5" or "EXCEL ORDER # 001726"
+ * Preserves leading zeros and suffix (e.g., "001737-5")
  */
 function extractPoFromExcel(data: unknown[][]): string {
   // Search all rows for ORDER patterns
@@ -222,13 +223,22 @@ function extractPoFromExcel(data: unknown[][]): string {
       // Check if cell contains ORDER-related text
       if (cellUpper.includes('ORDER')) {
         // Comprehensive regex that handles:
-        // - "EXCEL METALS LLC ORDER NO.: 001772" (Wuu Jing)
+        // - "EXCEL METALS LLC ORDER NO.: 001737-5" (Wuu Jing with suffix)
+        // - "EXCEL METALS LLC ORDER NO.: 001772" (Wuu Jing without suffix)
         // - "EXCEL ORDER # 001726" (Yuen Chang)
         // - "ORDER NO.: 001772"
         // - "ORDER # 1726"
-        const fullMatch = cellStr.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*0*(\d{3,6})/i);
+        // Preserves leading zeros and optional suffix (e.g., "-5")
+        const fullMatch = cellStr.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*(\d{6}(?:-\d+)?)/i);
         if (fullMatch) {
           return fullMatch[1];
+        }
+
+        // Also try shorter PO numbers (4-5 digits) without leading zeros
+        const shortMatch = cellStr.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*(\d{4,5})/i);
+        if (shortMatch) {
+          // Pad to 6 digits with leading zeros
+          return shortMatch[1].padStart(6, '0');
         }
 
         // Cell has ORDER but no number - check adjacent cells
@@ -237,15 +247,24 @@ function extractPoFromExcel(data: unknown[][]): string {
           let numValue: string;
 
           if (typeof nextCell === 'number') {
-            // Excel stores "001772" as number 1772
-            numValue = String(nextCell);
+            // Excel stores "001772" as number 1772 - pad to 6 digits
+            numValue = String(nextCell).padStart(6, '0');
           } else {
-            // Strip leading zeros from string
-            numValue = String(nextCell ?? '').trim().replace(/^0+/, '');
+            // Keep leading zeros from string, but extract digits
+            const strValue = String(nextCell ?? '').trim();
+            // Match 6 digits optionally followed by suffix like "-5"
+            const poMatch = strValue.match(/^(\d{6}(?:-\d+)?)$/);
+            if (poMatch) {
+              numValue = poMatch[1];
+            } else {
+              // Try 4-5 digits and pad
+              const shortPoMatch = strValue.match(/^(\d{4,5})$/);
+              numValue = shortPoMatch ? shortPoMatch[1].padStart(6, '0') : '';
+            }
           }
 
-          // Check if it's a valid PO number (3-6 digits)
-          if (/^\d{3,6}$/.test(numValue)) {
+          // Check if it's a valid PO number
+          if (/^\d{6}(?:-\d+)?$/.test(numValue)) {
             return numValue;
           }
         }
@@ -255,25 +274,30 @@ function extractPoFromExcel(data: unknown[][]): string {
     // Also try joining the row and matching (backup approach)
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
 
-    // Flexible pattern that handles various formats
-    const flexMatch = rowText.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*0*(\d{3,6})/i);
+    // Flexible pattern that handles various formats - preserve leading zeros and suffix
+    const flexMatch = rowText.match(/ORDER\s*(?:NO\.?)?\s*[#:]?\s*:?\s*(\d{6}(?:-\d+)?)/i);
     if (flexMatch) {
       return flexMatch[1];
     }
   }
 
-  // SECOND: Try to extract from bundle numbers in data rows (e.g., 001772-01 -> PO 1772)
+  // SECOND: Try to extract from bundle numbers in data rows
+  // e.g., 001737-5-01 -> PO "001737-5", or 001772-01 -> PO "001772"
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
     if (!row || !Array.isArray(row)) continue;
 
     for (const cell of row) {
       const cellStr = String(cell ?? '');
-      // Match bundle pattern: 6 digits followed by dash and 2 digits
-      const bundleMatch = cellStr.match(/(\d{6})-\d{2}/);
-      if (bundleMatch) {
-        const po = bundleMatch[1].replace(/^0+/, '') || bundleMatch[1];
-        return po;
+      // Match 3-part bundle pattern: 6 digits + suffix + sequence (e.g., 001737-5-01)
+      const bundle3Match = cellStr.match(/(\d{6}-\d+)-\d{2}/);
+      if (bundle3Match) {
+        return bundle3Match[1]; // Returns "001737-5"
+      }
+      // Match 2-part bundle pattern: 6 digits + sequence (e.g., 001772-01)
+      const bundle2Match = cellStr.match(/(\d{6})-\d{2}/);
+      if (bundle2Match) {
+        return bundle2Match[1]; // Returns "001772"
       }
     }
   }
