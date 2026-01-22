@@ -87,14 +87,13 @@ function getWeight(item: PackingListItem, weightType: WeightType): { gross: numb
 }
 
 /**
- * Convert parsed packing list to Acumatica format rows
+ * Calculate order quantity totals per SKU from a packing list
+ * Used to get full PO totals before splitting by container
  */
-export function toAcumaticaRows(
+export function calculateOrderQtyBySku(
   packingList: ParsedPackingList,
-  warehouse: string = DEFAULT_WAREHOUSE,
   weightType: WeightType = 'actual'
-): AcumaticaRow[] {
-  // Pre-calculate OrderQty per SKU (sum of pure steel weights, no skid)
+): Record<string, number> {
   const orderQtyBySku: Record<string, number> = {};
   packingList.items.forEach((item) => {
     const weights = getWeight(item, weightType);
@@ -104,6 +103,25 @@ export function toAcumaticaRows(
     // Use orderQty (pure steel weight) for Order Qty, not net (which includes skid)
     orderQtyBySku[item.inventoryId] += weights.orderQty;
   });
+  return orderQtyBySku;
+}
+
+/**
+ * Convert parsed packing list to Acumatica format rows
+ * @param packingList - The packing list to convert
+ * @param warehouse - Default warehouse code
+ * @param weightType - Whether to use actual or theoretical weights
+ * @param preCalculatedOrderQty - Optional pre-calculated order quantities per SKU
+ *                                (used when splitting by container to preserve full PO totals)
+ */
+export function toAcumaticaRows(
+  packingList: ParsedPackingList,
+  warehouse: string = DEFAULT_WAREHOUSE,
+  weightType: WeightType = 'actual',
+  preCalculatedOrderQty?: Record<string, number>
+): AcumaticaRow[] {
+  // Use pre-calculated totals if provided, otherwise calculate from this packing list
+  const orderQtyBySku = preCalculatedOrderQty || calculateOrderQtyBySku(packingList, weightType);
 
   return packingList.items.map((item) => {
     const weights = getWeight(item, weightType);
@@ -140,14 +158,20 @@ export function toAcumaticaRows(
 
 /**
  * Export parsed packing list to Excel file for Acumatica
+ * @param packingList - The packing list to export
+ * @param warehouse - Default warehouse code
+ * @param weightType - Whether to use actual or theoretical weights
+ * @param preCalculatedOrderQty - Optional pre-calculated order quantities per SKU
+ *                                (used when splitting by container to preserve full PO totals)
  */
 export function exportToExcel(
   packingList: ParsedPackingList,
   warehouse: string = DEFAULT_WAREHOUSE,
-  weightType: WeightType = 'actual'
+  weightType: WeightType = 'actual',
+  preCalculatedOrderQty?: Record<string, number>
 ): Blob {
   // Convert to Acumatica rows
-  const rows = toAcumaticaRows(packingList, warehouse, weightType);
+  const rows = toAcumaticaRows(packingList, warehouse, weightType, preCalculatedOrderQty);
 
   // Create worksheet data with headers
   const wsData: (string | number)[][] = [
@@ -247,6 +271,7 @@ function generateFilename(poNumber: string, containerNumber: string | undefined)
 
 /**
  * Split packing list by container and download separate files
+ * Preserves full PO order quantities on each container's export
  */
 export function downloadByContainer(
   packingList: ParsedPackingList,
@@ -264,6 +289,10 @@ export function downloadByContainer(
     return;
   }
 
+  // Calculate full PO order quantities ONCE from the complete packing list
+  // This ensures each container's export shows the total PO quantity, not just that container's portion
+  const fullOrderQtyBySku = calculateOrderQtyBySku(packingList, weightType);
+
   // Multiple containers - create separate files
   containers.forEach((containerNum) => {
     const containerItems = packingList.items.filter(item => item.containerNumber === containerNum);
@@ -275,7 +304,8 @@ export function downloadByContainer(
       totalNetWeightLbs: containerItems.reduce((sum, item) => sum + item.containerQtyLbs, 0),
     };
 
-    const blob = exportToExcel(containerPackingList, warehouse, weightType);
+    // Pass the full PO order quantities to preserve totals
+    const blob = exportToExcel(containerPackingList, warehouse, weightType, fullOrderQtyBySku);
     const url = URL.createObjectURL(blob);
 
     const filename = generateFilename(packingList.poNumber, containerNum);
