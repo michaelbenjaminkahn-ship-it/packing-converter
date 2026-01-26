@@ -451,8 +451,8 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
     const rowTextLower = rowText.toLowerCase();
 
-    // Check for container number header (e.g., "CONTAINER NO. FFAU2098727")
-    const containerMatch = rowText.match(/CONTAINER\s*NO\.?\s*:?\s*([A-Z]{4}\d{6,7}|\w+\d+)/i);
+    // Check for container number header (e.g., "CONTAINER NO. FFAU2098727" or "CONTAINER NUMBER : HMMU2202248")
+    const containerMatch = rowText.match(/CONTAINER\s*(?:NO\.?|NUMBER)\s*:?\s*([A-Z]{4}\d{6,7})/i);
     if (containerMatch) {
       currentContainer = containerMatch[1].toUpperCase();
       continue; // Skip container header rows
