@@ -70,9 +70,9 @@ function extractWuuJingFinish(text: string): string {
 function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
 
-  // Extract finish and warehouse from header
+  // Extract finish and warehouse from header - only set warehouse if detected
   const finish = extractWuuJingFinish(text);
-  const { warehouse } = extractWarehouse(text);
+  const { warehouse, detected: warehouseDetected } = extractWarehouse(text);
 
   // Find all size patterns with imperial dimensions
   // Pattern: thickness*widthMM*lengthMM(imperial) followed by PC and bundle
@@ -172,7 +172,7 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
       grossWeightLbs: mtToLbs(grossWeightMT),
       containerQtyLbs: mtToLbs(netWeightMT),
       rawSize: fullSizeStr,
-      warehouse,
+      warehouse: warehouseDetected ? warehouse : undefined,
       finish,
     });
   }
@@ -191,9 +191,9 @@ function parseWuuJingText(text: string, poNumber: string): PackingListItem[] {
 function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
 
-  // Extract finish and warehouse from header
+  // Extract finish and warehouse from header - only set warehouse if detected
   const finish = extractWuuJingFinish(text);
-  const { warehouse } = extractWarehouse(text);
+  const { warehouse, detected: warehouseDetected } = extractWarehouse(text);
 
   // Try OCR-optimized parsing first
   const ocrItems = parseWuuJingOcr(text, poNumber);
@@ -236,7 +236,7 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
         grossWeightLbs: mtToLbs(grossWeightMT),
         containerQtyLbs: mtToLbs(netWeightMT),
         rawSize: sizeStr,
-        warehouse,
+        warehouse: warehouseDetected ? warehouse : undefined,
         finish,
         noPaper: size.noPaper,
       });
@@ -252,9 +252,9 @@ function parseWuuJingFlexible(text: string, poNumber: string): PackingListItem[]
  * Looks for: bundle numbers (001812-XX), imperial dimensions, and weights (X.XXX MT)
  */
 function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
-  // Extract finish and warehouse from header
+  // Extract finish and warehouse from header - only set warehouse if detected
   const finish = extractWuuJingFinish(text);
-  const { warehouse } = extractWarehouse(text);
+  const { warehouse, detected: warehouseDetected } = extractWarehouse(text);
 
   // Clean OCR artifacts - common misreads
   const cleanText = text
@@ -283,7 +283,7 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
 
   // If we have bundle numbers, use bundle-anchored parsing (primary strategy for OCR)
   if (bundleMatches.length > 0) {
-    return parseWuuJingByBundles(cleanText, poNumber, finish, warehouse, bundleMatches);
+    return parseWuuJingByBundles(cleanText, poNumber, finish, warehouseDetected ? warehouse : undefined, bundleMatches);
   }
 
   // Fallback: Try size-pattern based parsing
@@ -388,7 +388,7 @@ function parseWuuJingOcr(text: string, poNumber: string): PackingListItem[] {
         grossWeightLbs: mtToLbs(grossWeightMT),
         containerQtyLbs: mtToLbs(netWeightMT),
         rawSize: fullMatch,
-        warehouse,
+        warehouse: warehouseDetected ? warehouse : undefined,
         finish,
       });
     }
@@ -463,7 +463,7 @@ function parseWuuJingByBundles(
   text: string,
   _poNumber: string,
   finish: string,
-  warehouse: string,
+  warehouse: string | undefined,
   bundleMatches: Array<{ match: RegExpMatchArray; format: 2 | 3 }>
 ): PackingListItem[] {
   const items: PackingListItem[] = [];
@@ -625,17 +625,212 @@ function extractYuenChangFinish(text: string): string {
 }
 
 /**
+ * Extract PO number from Yuen Chang document
+ * Looks for "EXCEL ORDER # 001836" pattern
+ */
+function extractYuenChangPoNumber(text: string): string {
+  const match = text.match(/EXCEL\s+ORDER\s*#\s*0*(\d{3,6})/i);
+  if (match) {
+    return match[1];
+  }
+  return '';
+}
+
+/**
+ * Extract container number from Yuen Chang section header
+ * Looks for "CONTAINER NUMBER : HMMU2202248" pattern
+ */
+function extractYuenChangContainerNumber(text: string): string {
+  const match = text.match(/CONTAINER\s+(?:NUMBER|NO\.?)\s*[:\.]?\s*([A-Z]{4}\d{6,7})/i);
+  if (match) {
+    return match[1];
+  }
+  return '';
+}
+
+/**
+ * Parse a single Yuen Chang data row
+ * Returns parsed item or null if not a valid data row
+ */
+interface YuenChangRowData {
+  lineNo: number;
+  itemCode: string;
+  gauge: number;
+  width: number;
+  length: number;
+  coilNo: string;
+  heatNumber: string;
+  pieceCount: number;
+  netWeightLbs: number;
+  grossWeightLbs: number;
+}
+
+function parseYuenChangRow(rowText: string): YuenChangRowData | null {
+  // Row format: NO | Item | SIZE (GA) | COIL NO. | Heat NO. | PCS | NET WEIGHT | GROSS WEIGHT
+  // Example: 1 YV034 20GA x 48" x 120" 49S14451A-017 YU107664 65 3,877.93 4,003.59
+
+  // Find item code: 2 uppercase letters + 3 digits (YV034, WM006, XL007)
+  const itemMatch = rowText.match(/\b([A-Z]{2}\d{3})\b/);
+  if (!itemMatch) return null;
+
+  // Find size: ##GA x ##" x ###"
+  const sizeMatch = rowText.match(/(\d{1,2})GA\s*[x×*]\s*(\d{2,3})[""']?\s*[x×*]\s*(\d{2,3})[""']?/i);
+  if (!sizeMatch) return null;
+
+  // Find coil number: alphanumeric pattern like 49S14451A-017, 4CS75060-021, F9244-025
+  const coilMatch = rowText.match(/\b(\d{1,2}[A-Z]{1,2}\d{4,5}[A-Z]?-\d{2,3}|[A-Z]\d{4}-\d{2,3})\b/);
+
+  // Find heat number: patterns like YU107664, ZU407, S97UE10C, 50909G10B2, S999G03B
+  // Must come after the coil number in the text
+  const coilEnd = coilMatch ? (coilMatch.index! + coilMatch[0].length) : sizeMatch.index! + sizeMatch[0].length;
+  const afterCoilText = rowText.substring(coilEnd);
+  const heatMatch = afterCoilText.match(/\b([A-Z]{1,2}\d{1,2}[A-Z0-9]{2,6}|\d{5}[A-Z]\d{2}[A-Z]\d?)\b/);
+
+  // Find weights: comma-formatted numbers like 3,877.93 or 4,003.59
+  // These should be at the end of the row after all other data
+  const weightMatches = [...rowText.matchAll(/\b(\d{1,2},?\d{3}\.\d{2})\b/g)]
+    .map(m => ({
+      value: parseFloat(m[1].replace(',', '')),
+      index: m.index!
+    }))
+    .filter(w => w.value >= 100 && w.value <= 100000);
+
+  // Find piece count: small number (1-500) that appears AFTER the heat number and BEFORE the weights
+  // It should be between heat and first weight
+  let pieceCount = 1;
+  if (heatMatch && weightMatches.length >= 1) {
+    const heatEnd = coilEnd + heatMatch.index! + heatMatch[0].length;
+    const firstWeightStart = weightMatches[0].index;
+    const betweenText = rowText.substring(heatEnd, firstWeightStart);
+    const pcsMatch = betweenText.match(/\b(\d{1,3})\b/);
+    if (pcsMatch) {
+      const pcs = parseInt(pcsMatch[1], 10);
+      if (pcs > 0 && pcs <= 500) {
+        pieceCount = pcs;
+      }
+    }
+  }
+
+  // Try to extract line number from the beginning
+  const lineNoMatch = rowText.match(/^\s*(\d{1,2})\s+[A-Z]{2}\d{3}/);
+  const lineNo = lineNoMatch ? parseInt(lineNoMatch[1], 10) : 0;
+
+  // Get weights - last two weight values are net and gross
+  const netWeightLbs = weightMatches.length >= 2
+    ? Math.round(weightMatches[weightMatches.length - 2].value)
+    : (weightMatches.length === 1 ? Math.round(weightMatches[0].value) : 0);
+  const grossWeightLbs = weightMatches.length >= 1
+    ? Math.round(weightMatches[weightMatches.length - 1].value)
+    : netWeightLbs;
+
+  return {
+    lineNo,
+    itemCode: itemMatch[1],
+    gauge: parseInt(sizeMatch[1], 10),
+    width: parseInt(sizeMatch[2], 10),
+    length: parseInt(sizeMatch[3], 10),
+    coilNo: coilMatch ? coilMatch[1] : '',
+    heatNumber: heatMatch ? heatMatch[1] : '',
+    pieceCount,
+    netWeightLbs,
+    grossWeightLbs,
+  };
+}
+
+/**
  * Parse Yuen Chang packing list format
+ * Handles multi-container documents with section headers
  * Columns: NO. | Item | SIZE (GA) | COIL NO. | Heat NO. | PCS | NET WEIGHT (LBS) | GROSS WEIGHT (LBS)
- * Example: 1 | WM006 | 26GA x 48" x 120" | 43S02543-035 | S92HB05C | 128 | 3,730.22 | 3,884.54
  */
 function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
 
-  // Extract warehouse from destination
-  const { warehouse } = extractWarehouse(text);
+  // Extract warehouse from destination - only set on items if actually detected
+  const { warehouse, detected: warehouseDetected } = extractWarehouse(text);
 
-  // Track current finish (can change between sections)
+  // Split text by container sections
+  // Pattern: "CONTAINER NUMBER : XXXX" or "CONTAINER NUMBER: XXXX"
+  const containerSections = text.split(/(?=CONTAINER\s+(?:NUMBER|NO\.?)\s*[:\.]?\s*[A-Z]{4}\d{6,7})/i);
+
+  let globalLineNumber = 0;
+
+  for (const section of containerSections) {
+    if (!section.trim()) continue;
+
+    // Extract container number for this section
+    const containerNumber = extractYuenChangContainerNumber(section);
+
+    // Extract finish for this section (can change between sections)
+    const finish = extractYuenChangFinish(section);
+
+    // Find all item codes in this section to identify data rows
+    const itemPattern = /\b([A-Z]{2}\d{3})\b/g;
+    let itemMatch;
+
+    while ((itemMatch = itemPattern.exec(section)) !== null) {
+      // Extract a window around this item code to parse as a row
+      // Look backwards for line number, forwards for size, coil, heat, pcs, weights
+      const windowStart = Math.max(0, itemMatch.index - 20);
+      const windowEnd = Math.min(section.length, itemMatch.index + 200);
+      const rowText = section.substring(windowStart, windowEnd);
+
+      const rowData = parseYuenChangRow(rowText);
+      if (!rowData) continue;
+
+      // Skip if this looks like a duplicate (same item code within 50 chars)
+      const lastItem = items[items.length - 1];
+      if (lastItem && lastItem.lotSerialNbr === rowData.itemCode) {
+        continue;
+      }
+
+      globalLineNumber++;
+
+      // Convert gauge to decimal thickness
+      const gaugeKey = `${rowData.gauge}GA`;
+      const thickness = GAUGE_TO_DECIMAL[gaugeKey] || GAUGE_TO_DECIMAL[String(rowData.gauge)] || rowData.gauge / 1000;
+
+      const size = {
+        thickness,
+        width: rowData.width,
+        length: rowData.length,
+        thicknessFormatted: thickness.toFixed(4),
+      };
+
+      items.push({
+        lineNumber: globalLineNumber,
+        inventoryId: buildInventoryId(size, 'yuen-chang', finish),
+        lotSerialNbr: rowData.itemCode,
+        pieceCount: rowData.pieceCount,
+        heatNumber: rowData.heatNumber,
+        grossWeightLbs: rowData.grossWeightLbs,
+        containerQtyLbs: rowData.netWeightLbs,
+        rawSize: `${rowData.gauge}GA x ${rowData.width}" x ${rowData.length}"`,
+        warehouse: warehouseDetected ? warehouse : undefined,
+        finish,
+        containerNumber,
+      });
+    }
+  }
+
+  // If no items found with section-based parsing, try the legacy approach
+  if (items.length === 0) {
+    return parseYuenChangTextLegacy(text, _poNumber);
+  }
+
+  return items;
+}
+
+/**
+ * Legacy Yuen Chang parsing - fallback for older format documents
+ */
+function parseYuenChangTextLegacy(text: string, _poNumber: string): PackingListItem[] {
+  const items: PackingListItem[] = [];
+
+  // Extract warehouse from destination - only set on items if actually detected
+  const { warehouse, detected: warehouseDetected } = extractWarehouse(text);
+  const containerNumber = extractYuenChangContainerNumber(text);
+
+  // Track current finish
   let currentFinish = extractYuenChangFinish(text);
 
   // Find section headers to track finish changes
@@ -646,30 +841,18 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
     sections.push({ finish: sectionMatch[1], index: sectionMatch.index });
   }
 
-  // Pattern to match Yuen Chang rows
-  // Format: WM006 | 26GA x 48" x 120" | coil | heat | pcs | net | gross
-  // Item pattern: 2 uppercase letters + 3 digits (e.g., WM006, XL007, YF002, YN005)
-  const itemPattern = /\b([A-Z]{2}\d{3})\b/g;
-  const itemMatches = [...text.matchAll(itemPattern)];
-
   // Size pattern: ##GA x ##" x ###"
   const sizePattern = /(\d{1,2})GA\s*[x×*]\s*(\d{2,3})[""']?\s*[x×*]\s*(\d{2,3})[""']?/gi;
   const sizeMatches = [...text.matchAll(sizePattern)];
 
-  // Heat number pattern: various formats
-  // Standard: YU107343, ZU407, S97PG13C, S98GA07D, ZT636, ZU195
-  // With hyphen: B6381-2000
-  const heatPattern = /\b([A-Z]{1,2}\d{1,2}[A-Z0-9]{2,6}|[A-Z]\d{4}-\d{3,4})\b/g;
-  const heatMatches = [...text.matchAll(heatPattern)];
-
   // Weight pattern: numbers with commas like 3,730.22 or just 3730.22
-  const weightPattern = /\b(\d{1,2},?\d{3}\.?\d{0,2})\b/g;
+  const weightPattern = /\b(\d{1,2},?\d{3}\.\d{2})\b/g;
   const weightMatches = [...text.matchAll(weightPattern)]
     .map(m => ({
       value: parseFloat(m[1].replace(',', '')),
       index: m.index!
     }))
-    .filter(w => w.value >= 100 && w.value <= 100000); // Reasonable LBS range
+    .filter(w => w.value >= 100 && w.value <= 100000);
 
   // Process each size match
   for (let i = 0; i < sizeMatches.length; i++) {
@@ -694,25 +877,6 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
       thicknessFormatted: thickness.toFixed(4),
     };
 
-    // Find the nearest item code (WM###, XL###, YF###, YN###, etc.) before this size
-    // Items appear in the row before the size, typically within 50 chars
-    const nearestItem = itemMatches
-      .filter(m => m.index! < matchIndex && m.index! > matchIndex - 50)
-      .pop();
-    const itemCode = nearestItem ? nearestItem[1] : `IT${String(i + 1).padStart(3, '0')}`;
-
-    // Find the nearest heat number after the size
-    const nearestHeat = heatMatches.find(m =>
-      m.index! > matchIndex && m.index! < matchIndex + 200
-    );
-    const heatNumber = nearestHeat ? nearestHeat[1] : '';
-
-    // Find piece count near this row
-    // Look for a small number (1-999) near the heat number
-    const contextText = text.substring(matchIndex, matchIndex + 300);
-    const pcsMatch = contextText.match(/\b(\d{1,3})\b.*?\b(\d{1,2},?\d{3}\.?\d*)\b/);
-    const pc = pcsMatch ? parseInt(pcsMatch[1], 10) : 1;
-
     // Find weights - look for two consecutive weight values after the size
     const weightsAfter = weightMatches.filter(w =>
       w.index > matchIndex && w.index < matchIndex + 300
@@ -725,14 +889,15 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
     items.push({
       lineNumber: i + 1,
       inventoryId: buildInventoryId(size, 'yuen-chang', finish),
-      lotSerialNbr: itemCode,
-      pieceCount: pc,
-      heatNumber,
+      lotSerialNbr: `IT${String(i + 1).padStart(3, '0')}`,
+      pieceCount: 1,
+      heatNumber: '',
       grossWeightLbs,
       containerQtyLbs: netWeightLbs,
       rawSize: sizeMatch[0],
-      warehouse,
+      warehouse: warehouseDetected ? warehouse : undefined,
       finish,
+      containerNumber,
     });
   }
 
@@ -845,8 +1010,9 @@ function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
   // Clean OCR artifacts first
   const cleanText = cleanYeouYihOcrText(text);
 
-  // Extract warehouse from destination
-  const { warehouse } = extractWarehouse(cleanText);
+  // Extract warehouse from destination - only set on items if actually detected
+  const { warehouse, detected: warehouseDetected } = extractWarehouse(cleanText);
+  const effectiveWarehouse = warehouseDetected ? warehouse : undefined;
 
   // Extract container number
   const containerNumber = extractYeouYihContainer(cleanText);
@@ -855,11 +1021,11 @@ function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
   const finish = '#1';
 
   // Try standard parsing first
-  let parsedItems = parseYeouYihTextStandard(cleanText, poNumber, warehouse, containerNumber, finish);
+  let parsedItems = parseYeouYihTextStandard(cleanText, poNumber, effectiveWarehouse, containerNumber, finish);
 
   // If standard parsing failed or got few items, try OCR-optimized parsing
   if (parsedItems.length === 0) {
-    parsedItems = parseYeouYihTextOcr(cleanText, poNumber, warehouse, containerNumber, finish);
+    parsedItems = parseYeouYihTextOcr(cleanText, poNumber, effectiveWarehouse, containerNumber, finish);
   }
 
   return parsedItems;
@@ -871,7 +1037,7 @@ function parseYeouYihText(text: string, poNumber: string): PackingListItem[] {
 function parseYeouYihTextStandard(
   text: string,
   poNumber: string,
-  warehouse: string,
+  warehouse: string | undefined,
   containerNumber: string,
   finish: string
 ): PackingListItem[] {
@@ -971,7 +1137,7 @@ function parseYeouYihTextStandard(
 function parseYeouYihTextOcr(
   text: string,
   poNumber: string,
-  warehouse: string,
+  warehouse: string | undefined,
   containerNumber: string,
   finish: string
 ): PackingListItem[] {
@@ -1166,8 +1332,18 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
   // Detect supplier
   const supplier = detectSupplier(packingListPage.text);
 
+  // For Yuen Chang, extract PO from document content (EXCEL ORDER # pattern)
+  // This takes priority over filename-based extraction
+  let effectivePoNumber = poNumber;
+  if (supplier === 'yuen-chang') {
+    const ycPo = extractYuenChangPoNumber(packingListPage.text);
+    if (ycPo) {
+      effectivePoNumber = ycPo;
+    }
+  }
+
   // Parse items from the packing list
-  const items = parsePackingListFromText(packingListPage.text, supplier, poNumber);
+  const items = parsePackingListFromText(packingListPage.text, supplier, effectivePoNumber);
 
   if (items.length === 0) {
     // Provide more context about what was found
@@ -1192,8 +1368,8 @@ export async function parsePdf(file: File, poNumber: string): Promise<ParsedPack
   }
 
   // Auto-detect PO if not provided or is UNKNOWN
-  let finalPoNumber = poNumber;
-  if (!poNumber || poNumber === 'UNKNOWN') {
+  let finalPoNumber = effectivePoNumber;
+  if (!effectivePoNumber || effectivePoNumber === 'UNKNOWN') {
     // Try to extract from bundle numbers (Wuu Jing)
     const bundlePo = extractPoFromBundles(packingListPage.text);
     if (bundlePo) {
@@ -1253,8 +1429,18 @@ export async function parsePdfWithOcr(
     if (!pageText.trim()) continue;
 
     const pageSupplier = detectSupplier(pageText);
+
+    // For Yuen Chang, extract PO from document content
+    let effectivePoNumber = poNumber;
+    if (pageSupplier === 'yuen-chang') {
+      const ycPo = extractYuenChangPoNumber(pageText);
+      if (ycPo) {
+        effectivePoNumber = ycPo;
+      }
+    }
+
     try {
-      const pageItems = parsePackingListFromText(pageText, pageSupplier, poNumber);
+      const pageItems = parsePackingListFromText(pageText, pageSupplier, effectivePoNumber);
       if (pageItems.length > 0) {
         if (!bestResult || pageItems.length > bestResult.items.length) {
           bestResult = {
@@ -1278,7 +1464,17 @@ export async function parsePdfWithOcr(
     }
 
     const supplier = detectSupplier(packingListPage.text);
-    const items = parsePackingListFromText(packingListPage.text, supplier, poNumber);
+
+    // For Yuen Chang, extract PO from document content
+    let effectivePoNumber = poNumber;
+    if (supplier === 'yuen-chang') {
+      const ycPo = extractYuenChangPoNumber(packingListPage.text);
+      if (ycPo) {
+        effectivePoNumber = ycPo;
+      }
+    }
+
+    const items = parsePackingListFromText(packingListPage.text, supplier, effectivePoNumber);
 
     if (items.length === 0) {
       const preview = packingListPage.text.substring(0, 300).replace(/\s+/g, ' ');
@@ -1318,14 +1514,31 @@ export async function parsePdfWithOcr(
   // Auto-detect PO if not provided or is UNKNOWN
   let finalPoNumber = poNumber;
   if (!poNumber || poNumber === 'UNKNOWN') {
-    // Try to extract from bundle numbers (Wuu Jing)
-    const bundlePo = extractPoFromBundles(packingListText);
-    if (bundlePo) {
-      finalPoNumber = bundlePo;
-    } else {
-      // Try to extract from text (explicit PO patterns)
-      const textPo = extractPoNumber(packingListText);
-      finalPoNumber = textPo || '';
+    // For Yuen Chang, try EXCEL ORDER # pattern first
+    if (supplier === 'yuen-chang') {
+      const ycPo = extractYuenChangPoNumber(packingListText);
+      if (ycPo) {
+        finalPoNumber = ycPo;
+      }
+    }
+
+    // If still not found, try other patterns
+    if (!finalPoNumber || finalPoNumber === 'UNKNOWN') {
+      // Try to extract from bundle numbers (Wuu Jing)
+      const bundlePo = extractPoFromBundles(packingListText);
+      if (bundlePo) {
+        finalPoNumber = bundlePo;
+      } else {
+        // Try to extract from text (explicit PO patterns)
+        const textPo = extractPoNumber(packingListText);
+        finalPoNumber = textPo || '';
+      }
+    }
+  } else if (supplier === 'yuen-chang') {
+    // Even if PO was provided (from filename), prefer document content for Yuen Chang
+    const ycPo = extractYuenChangPoNumber(packingListText);
+    if (ycPo) {
+      finalPoNumber = ycPo;
     }
   }
 
