@@ -1367,18 +1367,25 @@ export type { OcrProgress };
 export function isInvoicePage(text: string): boolean {
   const invoiceIndicators = [
     /COMMERCIAL\s+INVOICE/i,
-    /PRICE\s*\(USD\/PCS\)/i,
-    /PRICE\s+US\$\/PC/i,
+    /PRICE\s*\(USD\/(?:PCS|MT)\)/i,  // Matches both USD/PCS and USD/MT
+    /PRICE\s+US\$\/(?:PC|MT)/i,
     /UNIT\s+PRICE/i,
     /TOTAL\s+INVOICE\s+VALUE/i,
+    /VALUE\s*\(USD\)/i,              // YC invoice column header
+    /FOB\s+Cost/i,                   // YC invoice field
+    /Documentary\s+Credit/i,         // YC invoice field
+    /Ocean\s+Freight/i,              // YC invoice field
+    /Issuing\s+Bank/i,               // YC invoice field
   ];
 
   const packingIndicators = [
     /PACKING\s+LIST/i,
-    /CONTAINER\s+NO\./i,
+    /CONTAINER\s+NO(?:MBER)?\.?\s*:/i,  // Matches "CONTAINER NO." and "CONTAINER NUMBER :"
     /BUNDLE\s+NO\./i,
     /G['']?WEIGHT/i,
     /N['']?WEIGHT/i,
+    /COIL\s+NO\./i,                  // YC packing list column
+    /Heat\s+NO\./i,                  // YC packing list column
   ];
 
   const invoiceScore = invoiceIndicators.filter(p => p.test(text)).length;
@@ -1415,6 +1422,13 @@ function extractInvoiceNumber(text: string): string {
 /**
  * Parse Yuen Chang invoice from PDF text
  * Extracts price data for matching with packing lists
+ *
+ * YC invoice can have two formats:
+ * Format 1 (USD/MT): SIZE (GA) | PCS | QTY (LBS) | QTY (MT) | PRICE (USD/MT) | VALUE (USD)
+ * Format 2 (USD/PCS): SIZE (GA) | PCS | QTY (LBS) | QTY (MT) | PRICE (USD/PCS) | VALUE (USD)
+ *
+ * The function auto-detects which format by checking if price * MT ≈ value (per MT)
+ * or if price * PCS ≈ value (per piece)
  */
 function parseYuenChangInvoice(text: string): ParsedInvoice | null {
   const poNumber = extractInvoicePoNumber(text);
@@ -1425,80 +1439,104 @@ function parseYuenChangInvoice(text: string): ParsedInvoice | null {
   }
 
   const items: InvoiceLineItem[] = [];
+  const MT_TO_LBS = 2204.62;
 
-  // YC invoice format:
-  // ITEM SIZE (GA) | PCS | QTY (LBS) | QTY (MT) | PRICE (USD/PCS) | VALUE (USD)
-  // 3/16" x 48" x 120" | 26 | 7,989.55 | 3.624 | 266.60 | 6,931.60
+  // Detect pricing format from header
+  const isPricePerMT = /PRICE\s*\(USD\/MT\)/i.test(text) || /PER\s+MT/i.test(text);
+  const isPricePerPCS = /PRICE\s*\(USD\/PCS\)/i.test(text) || /USD\/PC/i.test(text);
 
-  // Pattern to match invoice rows
-  // Size: 3/16" x 48" x 120" or 1/4" x 60" x 144"
-  const rowPattern = /(\d+\/\d+)[""']\s*x\s*(\d+)[""']?\s*x\s*(\d+)[""']?\s+(\d+)\s+([\d,]+\.?\d*)\s+([\d.]+)\s+([\d.]+)\s+([\d,]+\.?\d*)/gi;
+  // Find all size patterns (both GA format and fraction format)
+  // GA format: "26GA x 48" x 120"" or "3/16" x 48" x 120""
+  const sizePatterns = [
+    // GA format: 26GA x 48" x 120"
+    /(\d{1,2})GA\s*x\s*(\d{2,3})[""']?\s*x\s*(\d{2,3})[""']?/gi,
+    // Fraction format: 3/16" x 48" x 120"
+    /(\d+\/\d+)[""']?\s*x\s*(\d{2,3})[""']?\s*x\s*(\d{2,3})[""']?/gi,
+  ];
 
-  let match;
-  while ((match = rowPattern.exec(text)) !== null) {
-    const thickness = match[1];  // e.g., "3/16"
-    const width = match[2];      // e.g., "48"
-    const length = match[3];     // e.g., "120"
-    const pcs = parseInt(match[4], 10);
-    const qtyLbs = parseFloat(match[5].replace(/,/g, ''));
-    // match[6] is QTY (MT) - we skip this
-    const pricePerPiece = parseFloat(match[7]);
-    // match[8] is VALUE - we could use this for validation
-
-    if (pcs > 0 && qtyLbs > 0 && pricePerPiece > 0) {
-      const weightPerPiece = qtyLbs / pcs;
-      const pricePerLb = Math.round((pricePerPiece / weightPerPiece) * 10000) / 10000;
-
-      items.push({
-        size: `${thickness}" x ${width}" x ${length}"`,
-        pcs,
-        qtyLbs,
-        pricePerPiece,
-        pricePerLb,
-      });
-    }
-  }
-
-  // If row pattern didn't work, try a more flexible approach
-  if (items.length === 0) {
-    // Look for size patterns and nearby numbers
-    const sizePattern = /(\d+\/\d+)[""']?\s*x\s*(\d+)[""']?\s*x\s*(\d+)[""']?/gi;
+  for (const sizePattern of sizePatterns) {
     const sizeMatches = [...text.matchAll(sizePattern)];
 
     for (const sizeMatch of sizeMatches) {
-      const thickness = sizeMatch[1];
-      const width = sizeMatch[2];
-      const length = sizeMatch[3];
+      const thickness = sizeMatch[1];  // e.g., "26" (GA) or "3/16" (fraction)
+      const width = sizeMatch[2];      // e.g., "48"
+      const length = sizeMatch[3];     // e.g., "120"
       const matchIndex = sizeMatch.index!;
 
-      // Look for numbers after this size (within 200 chars)
-      const afterText = text.substring(matchIndex, matchIndex + 200);
+      // Look for numbers after this size (within 250 chars)
+      const afterText = text.substring(matchIndex + sizeMatch[0].length, matchIndex + 250);
       const numbers = afterText.match(/[\d,]+\.?\d*/g) || [];
       const numericValues = numbers
         .map(n => parseFloat(n.replace(/,/g, '')))
         .filter(n => !isNaN(n) && n > 0);
 
-      // Expected order: PCS, QTY(LBS), QTY(MT), PRICE(USD/PCS), VALUE
-      if (numericValues.length >= 4) {
+      // Expected order: PCS, QTY(LBS), QTY(MT), PRICE, VALUE(USD)
+      // We need at least 5 values
+      if (numericValues.length >= 5) {
         const pcs = Math.round(numericValues[0]);
         const qtyLbs = numericValues[1];
-        // Skip index 2 (MT)
-        const pricePerPiece = numericValues[3];
+        const qtyMT = numericValues[2];
+        const price = numericValues[3];
+        const value = numericValues[4];
 
-        if (pcs > 0 && pcs < 1000 && qtyLbs > 100 && pricePerPiece > 10) {
-          const weightPerPiece = qtyLbs / pcs;
-          const pricePerLb = Math.round((pricePerPiece / weightPerPiece) * 10000) / 10000;
-
-          items.push({
-            size: `${thickness}" x ${width}" x ${length}"`,
-            pcs,
-            qtyLbs,
-            pricePerPiece,
-            pricePerLb,
-          });
+        // Validate basic data
+        if (pcs <= 0 || pcs >= 1000 || qtyLbs <= 100 || qtyMT <= 0 || qtyMT >= 100) {
+          continue;
         }
+
+        // Auto-detect pricing format by checking which formula produces the value
+        const valueIfPerMT = qtyMT * price;
+        const valueIfPerPCS = pcs * price;
+        const ratioMT = value / valueIfPerMT;
+        const ratioPCS = value / valueIfPerPCS;
+
+        let pricePerLb: number;
+        let detectedFormat: 'MT' | 'PCS' | null = null;
+
+        // Check if header explicitly indicates format
+        if (isPricePerMT && !isPricePerPCS) {
+          detectedFormat = 'MT';
+        } else if (isPricePerPCS && !isPricePerMT) {
+          detectedFormat = 'PCS';
+        } else {
+          // Auto-detect: which ratio is closer to 1.0?
+          if (Math.abs(ratioMT - 1.0) < Math.abs(ratioPCS - 1.0) && ratioMT > 0.8 && ratioMT < 1.2) {
+            detectedFormat = 'MT';
+          } else if (ratioPCS > 0.8 && ratioPCS < 1.2) {
+            detectedFormat = 'PCS';
+          }
+        }
+
+        if (!detectedFormat) {
+          continue;
+        }
+
+        if (detectedFormat === 'MT') {
+          // Price is per metric ton: pricePerLb = pricePerMT / 2204.62
+          pricePerLb = Math.round((price / MT_TO_LBS) * 10000) / 10000;
+        } else {
+          // Price is per piece: pricePerLb = pricePerPiece / weightPerPiece
+          const weightPerPiece = qtyLbs / pcs;
+          pricePerLb = Math.round((price / weightPerPiece) * 10000) / 10000;
+        }
+
+        // Format size string based on input type
+        const sizeStr = thickness.includes('/')
+          ? `${thickness}" x ${width}" x ${length}"`
+          : `${thickness}GA x ${width}" x ${length}"`;
+
+        items.push({
+          size: sizeStr,
+          pcs,
+          qtyLbs,
+          pricePerPiece: value / pcs,
+          pricePerLb,
+        });
       }
     }
+
+    // If we found items with this pattern, stop trying other patterns
+    if (items.length > 0) break;
   }
 
   if (items.length === 0) {
