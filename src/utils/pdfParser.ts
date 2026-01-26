@@ -770,8 +770,9 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
     while ((itemMatch = itemPattern.exec(section)) !== null) {
       // Extract a window around this item code to parse as a row
       // Look backwards for line number, forwards for size, coil, heat, pcs, weights
+      // Use larger window (350 chars) to ensure weights are captured for all row formats
       const windowStart = Math.max(0, itemMatch.index - 20);
-      const windowEnd = Math.min(section.length, itemMatch.index + 200);
+      const windowEnd = Math.min(section.length, itemMatch.index + 350);
       const rowText = section.substring(windowStart, windowEnd);
 
       const rowData = parseYuenChangRow(rowText);
@@ -822,6 +823,7 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
 
 /**
  * Legacy Yuen Chang parsing - fallback for older format documents
+ * Restores item code, heat number, and piece count extraction
  */
 function parseYuenChangTextLegacy(text: string, _poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
@@ -841,12 +843,23 @@ function parseYuenChangTextLegacy(text: string, _poNumber: string): PackingListI
     sections.push({ finish: sectionMatch[1], index: sectionMatch.index });
   }
 
+  // Item pattern: 2 uppercase letters + 3 digits (e.g., WM006, XL007, YF002, YN005)
+  const itemPattern = /\b([A-Z]{2}\d{3})\b/g;
+  const itemMatches = [...text.matchAll(itemPattern)];
+
   // Size pattern: ##GA x ##" x ###"
   const sizePattern = /(\d{1,2})GA\s*[x×*]\s*(\d{2,3})[""']?\s*[x×*]\s*(\d{2,3})[""']?/gi;
   const sizeMatches = [...text.matchAll(sizePattern)];
 
+  // Heat number pattern: various formats
+  // Standard: YU107343, ZU407, S97PG13C, S98GA07D, ZT636, ZU195
+  // With hyphen: B6381-2000
+  const heatPattern = /\b([A-Z]{1,2}\d{1,2}[A-Z0-9]{2,6}|[A-Z]\d{4}-\d{3,4})\b/g;
+  const heatMatches = [...text.matchAll(heatPattern)];
+
   // Weight pattern: numbers with commas like 3,730.22 or just 3730.22
-  const weightPattern = /\b(\d{1,2},?\d{3}\.\d{2})\b/g;
+  // Also match without decimal for flexibility
+  const weightPattern = /\b(\d{1,2},?\d{3}\.?\d{0,2})\b/g;
   const weightMatches = [...text.matchAll(weightPattern)]
     .map(m => ({
       value: parseFloat(m[1].replace(',', '')),
@@ -877,6 +890,25 @@ function parseYuenChangTextLegacy(text: string, _poNumber: string): PackingListI
       thicknessFormatted: thickness.toFixed(4),
     };
 
+    // Find the nearest item code (WM###, XL###, YF###, YN###, etc.) before this size
+    // Items appear in the row before the size, typically within 50 chars
+    const nearestItem = itemMatches
+      .filter(m => m.index! < matchIndex && m.index! > matchIndex - 50)
+      .pop();
+    const itemCode = nearestItem ? nearestItem[1] : `IT${String(i + 1).padStart(3, '0')}`;
+
+    // Find the nearest heat number after the size
+    const nearestHeat = heatMatches.find(m =>
+      m.index! > matchIndex && m.index! < matchIndex + 200
+    );
+    const heatNumber = nearestHeat ? nearestHeat[1] : '';
+
+    // Find piece count near this row
+    // Look for a small number (1-999) near the heat number
+    const contextText = text.substring(matchIndex, matchIndex + 300);
+    const pcsMatch = contextText.match(/\b(\d{1,3})\b.*?\b(\d{1,2},?\d{3}\.?\d*)\b/);
+    const pc = pcsMatch ? parseInt(pcsMatch[1], 10) : 1;
+
     // Find weights - look for two consecutive weight values after the size
     const weightsAfter = weightMatches.filter(w =>
       w.index > matchIndex && w.index < matchIndex + 300
@@ -889,9 +921,9 @@ function parseYuenChangTextLegacy(text: string, _poNumber: string): PackingListI
     items.push({
       lineNumber: i + 1,
       inventoryId: buildInventoryId(size, 'yuen-chang', finish),
-      lotSerialNbr: `IT${String(i + 1).padStart(3, '0')}`,
-      pieceCount: 1,
-      heatNumber: '',
+      lotSerialNbr: itemCode,
+      pieceCount: pc,
+      heatNumber,
       grossWeightLbs,
       containerQtyLbs: netWeightLbs,
       rawSize: sizeMatch[0],
