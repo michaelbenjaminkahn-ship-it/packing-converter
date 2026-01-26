@@ -98,4 +98,5 @@ export interface ParsedInvoice {
   invoiceNumber: string;  // Invoice reference number
   items: InvoiceLineItem[];
   totalValue: number;
+  warehouse?: string;     // Destination warehouse (e.g., "Houston" from "To: Houston, TX")
 }
