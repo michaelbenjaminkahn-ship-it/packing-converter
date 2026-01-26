@@ -1546,12 +1546,16 @@ function parseYuenChangInvoice(text: string): ParsedInvoice | null {
   // Calculate total value
   const totalValue = items.reduce((sum, item) => sum + (item.pricePerPiece * item.pcs), 0);
 
+  // Extract warehouse from invoice destination (e.g., "To: Houston, TX")
+  const { warehouse, detected: warehouseDetected } = extractWarehouse(text);
+
   return {
     supplier: 'yuen-chang',
     poNumber,
     invoiceNumber,
     items,
     totalValue,
+    warehouse: warehouseDetected ? warehouse : undefined,
   };
 }
 
@@ -1641,12 +1645,16 @@ function parseYeouYihInvoice(text: string): ParsedInvoice | null {
 
   const totalValue = items.reduce((sum, item) => sum + item.pricePerPiece, 0);
 
+  // Extract warehouse from invoice destination
+  const { warehouse, detected: warehouseDetected } = extractWarehouse(text);
+
   return {
     supplier: 'yeou-yih',
     poNumber,
     invoiceNumber,
     items,
     totalValue,
+    warehouse: warehouseDetected ? warehouse : undefined,
   };
 }
 
@@ -1741,7 +1749,15 @@ export function applyInvoicePrices(
     return item;
   });
 
-  return { ...packingList, items: updatedItems };
+  // Apply warehouse from invoice if packing list doesn't have one detected
+  let warehouse = packingList.warehouse;
+  let warehouseDetected = packingList.warehouseDetected;
+  if (!warehouseDetected && invoice.warehouse) {
+    warehouse = invoice.warehouse;
+    warehouseDetected = true;
+  }
+
+  return { ...packingList, items: updatedItems, warehouse, warehouseDetected };
 }
 
 /**
