@@ -168,8 +168,9 @@ export function findInventoryIdBySize(
           continue;
         }
       }
-      // Return the original uploaded inventory ID as-is
-      return invId;
+      // Return the uploaded inventory ID with spaces converted to underscores
+      // Uploaded list uses spaces but Acumatica requires underscores
+      return invId.replace(/ /g, '_');
     }
   }
 
