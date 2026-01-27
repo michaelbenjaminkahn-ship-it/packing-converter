@@ -20,7 +20,7 @@ export const FINISH_CODES = {
 // Supplier detection keywords
 export const SUPPLIER_KEYWORDS = {
   'wuu-jing': ['wuu jing', 'wuu-jing', 'wuujing', '五井', 'wu jing', 'wu-jing'],
-  'yuen-chang': ['yuen chang', 'yuen-chang', 'yuenchang', '元昌'],
+  'yuen-chang': ['yuen chang', 'yuen-chang', 'yuenchang', '元昌', 'yc reference'],
   'yeou-yih': ['yeou yih', 'yeou-yih', 'yeouyih', 'yih steel', 'yeou yih steel'],
 } as const;
 
