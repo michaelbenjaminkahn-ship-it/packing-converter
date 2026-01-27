@@ -7,7 +7,7 @@ import {
   FINISH_CODES,
 } from './constants';
 import { getMappedInventoryId, getThicknessDisplay } from '../config/inventoryMappings';
-import { findInventoryIdBySize } from './inventoryLookup';
+import { findInventoryIdBySize, formatInventoryId } from './inventoryLookup';
 
 /**
  * Convert metric tons to pounds
@@ -307,10 +307,8 @@ export function buildInventoryId(size: ParsedSize, supplier: Supplier, finish?: 
     return mapping.inventoryId;
   }
 
-  // 3. Auto-generate: Check for thickness display override
-  const thicknessDisplay = getThicknessDisplay(size.thickness) || size.thicknessFormatted;
-
-  return `${thicknessDisplay}-${size.width}__-${size.length}__-304/304L-${finishCode}`;
+  // 3. Auto-generate with proper Acumatica padding
+  return formatInventoryId(size.thickness, size.width, size.length, '304/304L', finishCode);
 }
 
 /**
