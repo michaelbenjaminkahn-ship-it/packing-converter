@@ -168,9 +168,9 @@ export function findInventoryIdBySize(
           continue;
         }
       }
-      // Return the original uploaded inventory ID as-is
-      // Acumatica uses spaces for padding (not underscores)
-      return invId;
+      // Return the uploaded inventory ID with spaces converted to underscores
+      // Acumatica displays with spaces but import requires underscores
+      return invId.replace(/ /g, '_');
     }
   }
 
