@@ -32,10 +32,16 @@ export function generateId(): string {
 
 /**
  * Format thickness to 4 decimal places
- * Example: 0.1875 -> "0.1875", 0.4375 -> "0.4375", 0.25 -> "0.2500"
+ * Example: 0.1875 -> "0.1875", 0.4375 -> "0.4375", 0.25 -> "0.250"
+ * Uses 3 decimal places minimum, 4 if the 4th digit is non-zero
  */
 export function formatThickness(thickness: number): string {
-  return thickness.toFixed(4);
+  const four = thickness.toFixed(4);
+  // If the 4th decimal place is '0', use 3 decimal places
+  if (four.endsWith('0')) {
+    return thickness.toFixed(3);
+  }
+  return four;
 }
 
 /**

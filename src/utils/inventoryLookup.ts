@@ -168,11 +168,8 @@ export function findInventoryIdBySize(
           continue;
         }
       }
-      // Return standardized format (not the uploaded format)
-      // Format: "0.090-48__-120__-304/304L-2B____"
-      const thicknessStr = parsed.thickness.toString();
-      const finishPadded = parsed.finish.endsWith('____') ? parsed.finish : parsed.finish + '____';
-      return `${thicknessStr}-${parsed.width}__-${parsed.length}__-${parsed.material}-${finishPadded}`;
+      // Return the original uploaded inventory ID as-is
+      return invId;
     }
   }
 
