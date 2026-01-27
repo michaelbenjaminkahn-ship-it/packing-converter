@@ -220,12 +220,20 @@ function App() {
       )
     );
 
+    // Sort files: Excel packing lists first, then PDFs (invoices)
+    // This ensures packing list data is established before invoice data supplements it
+    const sortedFiles = [...pendingFiles].sort((a, b) => {
+      const aIsExcel = a.type === 'excel' ? 0 : 1;
+      const bIsExcel = b.type === 'excel' ? 0 : 1;
+      return aIsExcel - bIsExcel;
+    });
+
     // Process each file
     const newResults: ParsedPackingList[] = [];
     const newInvoices: ParsedInvoice[] = [];
     const filesNeedingOcr: UploadedFile[] = [];
 
-    for (const uploadedFile of pendingFiles) {
+    for (const uploadedFile of sortedFiles) {
       try {
         const parseResult = await parseFile(uploadedFile.file, {
           poNumber: poNumber || undefined,
@@ -260,23 +268,40 @@ function App() {
             )
           );
         } else if (parseResult.result) {
-          newResults.push(parseResult.result);
-          setFiles((prev) =>
-            prev.map((f) =>
-              f.id === uploadedFile.id
-                ? { ...f, status: 'completed' as const, result: parseResult.result }
-                : f
-            )
+          // If this is a PDF packing list and we already have an Excel result for the same PO,
+          // skip the PDF result — Excel packing list data always takes priority
+          const poMatch = parseResult.result.poNumber;
+          const alreadyHaveExcelResult = uploadedFile.type === 'pdf' && newResults.some(
+            (r) => r.poNumber === poMatch
           );
 
-          // Pre-fill PO number from parsed result if not already set
-          if (!poNumber && parseResult.result.poNumber && parseResult.result.poNumber !== 'UNKNOWN') {
-            setPoNumber(parseResult.result.poNumber);
-          }
+          if (alreadyHaveExcelResult) {
+            setFiles((prev) =>
+              prev.map((f) =>
+                f.id === uploadedFile.id
+                  ? { ...f, status: 'completed' as const, error: `Skipped — packing list already loaded from Excel (PO# ${poMatch})` }
+                  : f
+              )
+            );
+          } else {
+            newResults.push(parseResult.result);
+            setFiles((prev) =>
+              prev.map((f) =>
+                f.id === uploadedFile.id
+                  ? { ...f, status: 'completed' as const, result: parseResult.result }
+                  : f
+              )
+            );
 
-          // Pre-fill warehouse from parsed result if detected
-          if (parseResult.result.warehouse) {
-            setWarehouse(parseResult.result.warehouse);
+            // Pre-fill PO number from parsed result if not already set
+            if (!poNumber && parseResult.result.poNumber && parseResult.result.poNumber !== 'UNKNOWN') {
+              setPoNumber(parseResult.result.poNumber);
+            }
+
+            // Pre-fill warehouse from parsed result if detected
+            if (parseResult.result.warehouse) {
+              setWarehouse(parseResult.result.warehouse);
+            }
           }
         }
       } catch (error) {
