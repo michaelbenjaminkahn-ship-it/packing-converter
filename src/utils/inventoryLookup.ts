@@ -168,12 +168,39 @@ export function findInventoryIdBySize(
           continue;
         }
       }
-      // Return the original uploaded inventory ID as-is
-      return invId;
+      // Rebuild the ID from parsed components with proper Acumatica padding
+      // Width: pad to 4 chars (e.g., "48__", "60__")
+      // Length: pad to 5 chars (e.g., "96___", "120__", "300__")
+      // Finish: append trailing underscores to pad to 6 chars (e.g., "2B____", "#1____", "#4____")
+      return formatInventoryId(parsed.thickness, parsed.width, parsed.length, parsed.material, parsed.finish);
     }
   }
 
   return null;
+}
+
+/**
+ * Format an inventory ID with proper Acumatica padding
+ * Width: padEnd to 4 chars with underscores
+ * Length: padEnd to 5 chars with underscores
+ * Finish: padEnd to 6 chars with underscores
+ */
+export function formatInventoryId(
+  thickness: number,
+  width: number,
+  length: number,
+  material: string,
+  finish: string
+): string {
+  // Format thickness: use 3 decimal places, or 4 if the 4th digit is non-zero
+  const t4 = thickness.toFixed(4);
+  const thicknessStr = t4.endsWith('0') ? thickness.toFixed(3) : t4;
+
+  const widthStr = String(width).padEnd(4, '_');
+  const lengthStr = String(length).padEnd(5, '_');
+  const finishStr = finish.replace(/_+$/, '').padEnd(6, '_');
+
+  return `${thicknessStr}-${widthStr}-${lengthStr}-${material}-${finishStr}`;
 }
 
 /**
