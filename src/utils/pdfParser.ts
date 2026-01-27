@@ -674,7 +674,7 @@ function parseYuenChangRow(rowText: string): YuenChangRowData | null {
   if (!itemMatch) return null;
 
   // Find size: ##GA x ##" x ###"
-  const sizeMatch = rowText.match(/(\d{1,2})GA\s*[x×*]\s*(\d{2,3})[""']?\s*[x×*]\s*(\d{2,3})[""']?/i);
+  const sizeMatch = rowText.match(/(\d{1,2})GA\s*[x×*]\s*(\d{2,3})\s*[""']?\s*[x×*]\s*(\d{2,3})\s*[""']?(?:\s|$)/i);
   if (!sizeMatch) return null;
 
   // Find coil number: alphanumeric pattern like 49S14451A-017, 4CS75060-021, F9244-025
@@ -842,7 +842,7 @@ function parseYuenChangTextLegacy(text: string, _poNumber: string): PackingListI
   }
 
   // Size pattern: ##GA x ##" x ###"
-  const sizePattern = /(\d{1,2})GA\s*[x×*]\s*(\d{2,3})[""']?\s*[x×*]\s*(\d{2,3})[""']?/gi;
+  const sizePattern = /(\d{1,2})GA\s*[x×*]\s*(\d{2,3})\s*[""']?\s*[x×*]\s*(\d{2,3})\s*[""']?(?:\s|$)/gi;
   const sizeMatches = [...text.matchAll(sizePattern)];
 
   // Weight pattern: numbers with commas like 3,730.22 or just 3730.22
@@ -1662,9 +1662,9 @@ function parseYuenChangInvoice(text: string): ParsedInvoice | null {
   // GA format: "26GA x 48" x 120"" or "3/16" x 48" x 120""
   const sizePatterns = [
     // GA format: 26GA x 48" x 120"
-    /(\d{1,2})GA\s*x\s*(\d{2,3})[""']?\s*x\s*(\d{2,3})[""']?/gi,
+    /(\d{1,2})GA\s*x\s*(\d{2,3})\s*[""']?\s*x\s*(\d{2,3})\s*[""']?(?:\s|$)/gi,
     // Fraction format: 3/16" x 48" x 120"
-    /(\d+\/\d+)[""']?\s*x\s*(\d{2,3})[""']?\s*x\s*(\d{2,3})[""']?/gi,
+    /(\d+\/\d+)\s*[""']?\s*x\s*(\d{2,3})\s*[""']?\s*x\s*(\d{2,3})\s*[""']?(?:\s|$)/gi,
   ];
 
   for (const sizePattern of sizePatterns) {
