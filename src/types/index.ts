@@ -13,6 +13,7 @@ export interface PackingListItem {
   finish?: string;
   containerNumber?: string;
   noPaper?: boolean; // "NP" notation - sheet with no paper wrap (99% sheet)
+  poNumber?: string; // Item-level PO number (for multi-PO packing lists)
   // Override fields - when set, these take precedence over calculated values
   orderQtyOverride?: number;
   unitCostOverride?: number;

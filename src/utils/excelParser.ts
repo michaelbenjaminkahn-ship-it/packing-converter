@@ -413,6 +413,10 @@ function parseWuuJingExcel(data: unknown[][], poNumber: string): PackingListItem
 /**
  * Parse Yuen Chang Excel format
  * Columns: NO., Item, SIZE (GA), COIL NO., Heat NO., PCS, NETWEIGHT (lbs), GROSSWEIGHT (lbs)
+ *
+ * Handles:
+ * - Multiple PO numbers per file (EXCEL ORDER # sections)
+ * - Multi-line skids (multiple rows sharing same Item code)
  */
 function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListItem[] {
   const items: PackingListItem[] = [];
@@ -438,10 +442,46 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
     grossWeight: findColumnIndex(headers, ['grossweight', 'gross weight', 'gross']),
   };
 
-  // Track current finish (can change with section headers)
+  // Track current state
   let currentFinish = '2B';
-  // Track current container number
   let currentContainer = '';
+  let currentPo = poNumber; // Track PO per section
+
+  // Track pending multi-line item for consolidation
+  let pendingItem: {
+    itemCode: string;
+    size: ReturnType<typeof parseSize>;
+    sizeStr: string;
+    heatNumbers: string[];
+    totalPcs: number;
+    totalNetWeight: number;
+    totalGrossWeight: number;
+    finish: string;
+    container: string;
+    po: string;
+    noPaper?: boolean;
+  } | null = null;
+
+  // Helper to finalize pending item
+  const finalizePendingItem = () => {
+    if (pendingItem && pendingItem.size) {
+      items.push({
+        lineNumber: items.length + 1,
+        inventoryId: buildInventoryId(pendingItem.size, 'yuen-chang', pendingItem.finish),
+        lotSerialNbr: pendingItem.itemCode,
+        pieceCount: pendingItem.totalPcs,
+        heatNumber: pendingItem.heatNumbers[0] || '', // Use first heat number
+        grossWeightLbs: Math.round(pendingItem.totalGrossWeight),
+        containerQtyLbs: Math.round(pendingItem.totalNetWeight),
+        rawSize: pendingItem.sizeStr,
+        finish: pendingItem.finish,
+        containerNumber: pendingItem.container,
+        noPaper: pendingItem.noPaper,
+        poNumber: pendingItem.po, // Store PO per item
+      });
+    }
+    pendingItem = null;
+  };
 
   // Parse data rows
   for (let i = headerRowIndex + 1; i < data.length; i++) {
@@ -451,15 +491,25 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
     const rowTextLower = rowText.toLowerCase();
 
-    // Check for container number header (e.g., "CONTAINER NO. FFAU2098727" or "CONTAINER NUMBER : HMMU2202248")
+    // Check for EXCEL ORDER header (contains PO number)
+    const orderMatch = rowText.match(/EXCEL\s+ORDER\s*#?\s*(\d{6})/i);
+    if (orderMatch) {
+      finalizePendingItem(); // Finalize any pending item before PO change
+      currentPo = orderMatch[1];
+      continue;
+    }
+
+    // Check for container number header
     const containerMatch = rowText.match(/CONTAINER\s*(?:NO\.?|NUMBER)\s*:?\s*([A-Z]{4}\d{6,7})/i);
     if (containerMatch) {
+      finalizePendingItem(); // Finalize any pending item before container change
       currentContainer = containerMatch[1].toUpperCase();
-      continue; // Skip container header rows
+      continue;
     }
 
     // Check for section headers that indicate finish changes
     if (rowText.includes('304/304L')) {
+      finalizePendingItem(); // Finalize any pending item before finish change
       if (rowText.includes('#1') || rowText.includes('# 1') || rowTextLower.includes('#1 finish')) {
         currentFinish = '#1';
       } else if (rowText.includes('#4') || rowText.includes('# 4')) {
@@ -469,65 +519,76 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
       } else if (rowText.includes('BA')) {
         currentFinish = 'BA';
       }
-      continue; // Skip section header rows
+      continue;
     }
 
-    // Skip subtotal/order rows - check entire row text since column A might be empty
+    // Skip subtotal/order rows
     if (rowTextLower.includes('total') || rowTextLower.includes('subtotal') ||
-        rowTextLower.includes('excel order') || rowTextLower.includes('yc reference')) continue;
+        rowTextLower.includes('yc reference')) continue;
 
     // Get size string
     const sizeStr = colMap.size >= 0 ? String(row[colMap.size] || '') : '';
     if (!sizeStr) continue;
 
-    // Try to parse size - support both gauge (sheet) and fraction (plate) formats
+    // Try to parse size
     let size = parseSize(sizeStr, 'yuen-chang');
     if (!size) {
-      // Try plate format (fraction-based like "3/8" x 60" x 120"")
       size = parseYuenChangPlateSize(sizeStr);
       if (size && currentFinish === '2B') {
-        // Default to #1 finish for plate if not already set by section header
         currentFinish = '#1';
       }
     }
     if (!size) continue;
 
-    const lineNo = colMap.no >= 0 ? parseInt(String(row[colMap.no]), 10) : items.length + 1;
-    const itemCode = colMap.item >= 0 ? String(row[colMap.item] || '') : '';
+    const itemCode = colMap.item >= 0 ? String(row[colMap.item] || '').trim() : '';
     const coilNo = colMap.coilNo >= 0 ? String(row[colMap.coilNo] || '') : '';
     const heatNo = colMap.heatNo >= 0 ? String(row[colMap.heatNo] || '') : '';
-    const pcs = colMap.pcs >= 0 ? parseInt(String(row[colMap.pcs]), 10) : 1;
+    const pcs = colMap.pcs >= 0 ? parseInt(String(row[colMap.pcs]), 10) : 0;
+    const netWeight = colMap.netWeight >= 0 ? parseFloat(String(row[colMap.netWeight]).replace(/,/g, '')) : 0;
+    const grossWeight = colMap.grossWeight >= 0 ? parseFloat(String(row[colMap.grossWeight]).replace(/,/g, '')) : 0;
 
-    // Yuen Chang weights are already in LBS
-    let netWeight = colMap.netWeight >= 0 ? parseFloat(String(row[colMap.netWeight]).replace(/,/g, '')) : 0;
-    let grossWeight = colMap.grossWeight >= 0 ? parseFloat(String(row[colMap.grossWeight]).replace(/,/g, '')) : netWeight;
-
-    // Skip if no valid data
+    // Skip if no valid piece count
     if (isNaN(pcs) || pcs <= 0) continue;
 
-    // Round weights
-    netWeight = Math.round(netWeight);
-    grossWeight = Math.round(grossWeight);
+    // Check if this row has a valid item code (like XQ021, YB014, etc.)
+    const hasValidItemCode = itemCode.match(/^[A-Z]{2}\d{3}$/i);
 
-    // Use item code as lot/serial (e.g., XL007)
-    const lotSerial = itemCode.match(/^[A-Z]{2}\d{3}$/i)
-      ? itemCode.toUpperCase()
-      : buildLotSerialNbr(poNumber, itemCode || String(lineNo));
+    if (hasValidItemCode) {
+      // New item - finalize any pending item first
+      finalizePendingItem();
 
-    items.push({
-      lineNumber: items.length + 1,
-      inventoryId: buildInventoryId(size, 'yuen-chang', currentFinish),
-      lotSerialNbr: lotSerial,
-      pieceCount: pcs || 1,
-      heatNumber: heatNo || coilNo,
-      grossWeightLbs: grossWeight,
-      containerQtyLbs: netWeight,
-      rawSize: sizeStr,
-      finish: currentFinish,
-      containerNumber: currentContainer,
-      noPaper: size.noPaper,
-    });
+      // Start new pending item
+      pendingItem = {
+        itemCode: itemCode.toUpperCase(),
+        size,
+        sizeStr,
+        heatNumbers: (heatNo || coilNo) ? [heatNo || coilNo] : [],
+        totalPcs: pcs,
+        totalNetWeight: netWeight || 0,
+        totalGrossWeight: grossWeight || netWeight || 0,
+        finish: currentFinish,
+        container: currentContainer,
+        po: currentPo,
+        noPaper: size.noPaper,
+      };
+    } else if (pendingItem) {
+      // No item code - this is a sub-row of the pending item
+      // Accumulate pcs and weights
+      pendingItem.totalPcs += pcs;
+      pendingItem.totalNetWeight += netWeight || 0;
+      // Only add gross weight if it's provided (sub-rows often share gross weight)
+      if (grossWeight > 0) {
+        pendingItem.totalGrossWeight += grossWeight;
+      }
+      if (heatNo || coilNo) {
+        pendingItem.heatNumbers.push(heatNo || coilNo);
+      }
+    }
+    // If no pending item and no valid item code, skip this row
   }
+
+  // Finalize any remaining pending item
+  finalizePendingItem();
 
   return items;
 }
