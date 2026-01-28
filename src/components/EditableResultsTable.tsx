@@ -363,26 +363,39 @@ export function EditableResultsTable({
               <span className="text-slate-500">Items:</span>{' '}
               <span className="font-medium text-slate-700">{result.items.length}</span>
             </div>
-            {result.warehouseDetected === false && (
-              <div className="flex items-center gap-1.5 text-amber-600 bg-amber-50 px-2 py-1 rounded-lg">
+            {/* Warehouse selector - always visible */}
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${
+              result.warehouseDetected === false
+                ? 'text-amber-600 bg-amber-50'
+                : 'text-slate-600 bg-slate-50'
+            }`}>
+              {result.warehouseDetected === false && (
                 <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <span className="text-xs font-medium">Warehouse not detected.</span>
-                <select
-                  value={result.warehouse || warehouse}
-                  onChange={(e) => updateAllWarehouses(e.target.value)}
-                  className="ml-1 px-2 py-0.5 text-xs font-medium bg-white border border-amber-300 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500 cursor-pointer"
-                >
-                  {WAREHOUSES.map((wh) => (
-                    <option key={wh} value={wh}>
-                      {wh}
-                    </option>
-                  ))}
-                </select>
+              )}
+              <span className="text-xs font-medium">
+                {result.warehouseDetected === false ? 'Warehouse not detected.' : 'Warehouse:'}
+              </span>
+              <select
+                value={result.warehouse || warehouse}
+                onChange={(e) => updateAllWarehouses(e.target.value)}
+                className={`ml-1 px-2 py-0.5 text-xs font-medium bg-white border rounded-md focus:outline-none focus:ring-2 cursor-pointer ${
+                  result.warehouseDetected === false
+                    ? 'border-amber-300 focus:ring-amber-400/30 focus:border-amber-500'
+                    : 'border-slate-300 focus:ring-navy-400/30 focus:border-navy-500'
+                }`}
+              >
+                {WAREHOUSES.map((wh) => (
+                  <option key={wh} value={wh}>
+                    {wh}
+                  </option>
+                ))}
+              </select>
+              {result.warehouseDetected === false && (
                 <span className="text-xs text-amber-500">(applies to all)</span>
-              </div>
-            )}
+              )}
+            </div>
             {onWeightTypeChange && (
               <div className="flex items-center gap-2 ml-2 pl-2 border-l border-slate-300">
                 <span className="text-slate-500">Weight:</span>
