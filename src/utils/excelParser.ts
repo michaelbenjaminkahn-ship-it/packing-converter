@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import { PackingListItem, ParsedPackingList, Supplier } from '../types';
 import { detectSupplier, scorePageAsPackingList } from './detection';
-import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse, parseYeouYihSize } from './conversion';
+import { parseSize, buildInventoryId, buildLotSerialNbr, mtToLbs, extractWarehouse, parseYeouYihSize, parseYuenChangPlateSize } from './conversion';
 import { VENDOR_CODES } from './constants';
 
 /**
@@ -460,7 +460,9 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
 
     // Check for section headers that indicate finish changes
     if (rowText.includes('304/304L')) {
-      if (rowText.includes('#4') || rowText.includes('# 4')) {
+      if (rowText.includes('#1') || rowText.includes('# 1') || rowTextLower.includes('#1 finish')) {
+        currentFinish = '#1';
+      } else if (rowText.includes('#4') || rowText.includes('# 4')) {
         currentFinish = '#4';
       } else if (rowText.includes('2B')) {
         currentFinish = '2B';
@@ -476,9 +478,18 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
 
     // Get size string
     const sizeStr = colMap.size >= 0 ? String(row[colMap.size] || '') : '';
-    if (!sizeStr || !sizeStr.toLowerCase().includes('ga')) continue;
+    if (!sizeStr) continue;
 
-    const size = parseSize(sizeStr, 'yuen-chang');
+    // Try to parse size - support both gauge (sheet) and fraction (plate) formats
+    let size = parseSize(sizeStr, 'yuen-chang');
+    if (!size) {
+      // Try plate format (fraction-based like "3/8" x 60" x 120"")
+      size = parseYuenChangPlateSize(sizeStr);
+      if (size && currentFinish === '2B') {
+        // Default to #1 finish for plate if not already set by section header
+        currentFinish = '#1';
+      }
+    }
     if (!size) continue;
 
     const lineNo = colMap.no >= 0 ? parseInt(String(row[colMap.no]), 10) : items.length + 1;

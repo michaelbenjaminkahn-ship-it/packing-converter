@@ -150,6 +150,38 @@ export function parseYuenChangSize(sizeStr: string): ParsedSize | null {
 }
 
 /**
+ * Parse Yuen Chang PLATE size format: "3/8" x 60" x 120"" or "1/4" x 60" x 120""
+ * Used for YC plate (less common than sheet) which uses fraction notation instead of gauge
+ */
+export function parseYuenChangPlateSize(sizeStr: string): ParsedSize | null {
+  // Normalize the string
+  const normalized = sizeStr.replace(/\s+/g, ' ').trim();
+
+  // Pattern: fraction" x width" x length" (e.g., "3/8" x 60" x 120"")
+  // Also handles: 3/16" x 60" x 120", 1/4" x 60" x 120"
+  const fractionMatch = normalized.match(/(\d+\/\d+)[""']?\s*[xX×*]\s*(\d+)[""']?\s*[xX×*]\s*(\d+)/i);
+  if (fractionMatch) {
+    const fractionStr = fractionMatch[1];
+    const width = parseFloat(fractionMatch[2]);
+    const length = parseFloat(fractionMatch[3]);
+
+    // Parse fraction to decimal
+    const thickness = FRACTION_TO_DECIMAL[fractionStr] || parseThickness(fractionStr);
+
+    if (thickness && !isNaN(width) && !isNaN(length)) {
+      return {
+        thickness,
+        width,
+        length,
+        thicknessFormatted: formatThickness(thickness),
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Parse any thickness value (fraction, decimal, gauge, mm)
  */
 export function parseThickness(value: string): number | null {
