@@ -500,7 +500,8 @@ function parseYuenChangExcel(data: unknown[][], poNumber: string): PackingListIt
     }
 
     // Check for container number header
-    const containerMatch = rowText.match(/CONTAINER\s*(?:NO\.?|NUMBER)\s*:?\s*([A-Z]{4}\d{6,7})/i);
+    // Formats: "CONTAINER NO.DFSU1563342" (YC - no space) or "CONTAINER NO: XXXX1234567"
+    const containerMatch = rowText.match(/CONTAINER\s*NO\.?\s*:?\s*([A-Z]{4}\d{6,7})/i);
     if (containerMatch) {
       finalizePendingItem(); // Finalize any pending item before container change
       currentContainer = containerMatch[1].toUpperCase();
@@ -886,7 +887,8 @@ function extractYeouYihContainerFromExcel(data: unknown[][], beforeRow: number):
     if (!row || !Array.isArray(row)) continue;
 
     const rowText = row.map(cell => String(cell ?? '')).join(' ');
-    const match = rowText.match(/CONTAINER\s*NO\.?\s*[:\.]?\s*([A-Z]{4}\d{6,7})/i);
+    // Formats: "CONTAINER NO.XXXX1234567" (no space) or "CONTAINER NO: XXXX1234567"
+    const match = rowText.match(/CONTAINER\s*NO\.?\s*:?\s*([A-Z]{4}\d{6,7})/i);
     if (match) return match[1];
   }
   return '';
