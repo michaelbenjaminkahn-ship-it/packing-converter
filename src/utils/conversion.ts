@@ -6,7 +6,7 @@ import {
   FRACTION_TO_DECIMAL,
   FINISH_CODES,
 } from './constants';
-import { getMappedInventoryId, getThicknessDisplay } from '../config/inventoryMappings';
+import { getMappedInventoryId } from '../config/inventoryMappings';
 import { findInventoryIdBySize, formatInventoryId } from './inventoryLookup';
 
 /**
