@@ -88,7 +88,8 @@ function getWeight(item: PackingListItem, weightType: WeightType): { gross: numb
 
 /**
  * Calculate order quantity totals per SKU from a packing list
- * Used to get full PO totals before splitting by container
+ * Scoped by PO number for multi-PO packing lists
+ * Key format: "PO:inventoryId" to separate quantities per PO
  */
 export function calculateOrderQtyBySku(
   packingList: ParsedPackingList,
@@ -97,11 +98,14 @@ export function calculateOrderQtyBySku(
   const orderQtyBySku: Record<string, number> = {};
   packingList.items.forEach((item) => {
     const weights = getWeight(item, weightType);
-    if (!orderQtyBySku[item.inventoryId]) {
-      orderQtyBySku[item.inventoryId] = 0;
+    // Use item-level PO if available, otherwise fall back to packing list PO
+    const itemPo = item.poNumber || packingList.poNumber;
+    // Key by PO:inventoryId to separate quantities per PO
+    const key = `${itemPo}:${item.inventoryId}`;
+    if (!orderQtyBySku[key]) {
+      orderQtyBySku[key] = 0;
     }
-    // Use orderQty (pure steel weight) for Order Qty, not net (which includes skid)
-    orderQtyBySku[item.inventoryId] += weights.orderQty;
+    orderQtyBySku[key] += weights.orderQty;
   });
   return orderQtyBySku;
 }
@@ -113,6 +117,7 @@ export function calculateOrderQtyBySku(
  * @param weightType - Whether to use actual or theoretical weights
  * @param preCalculatedOrderQty - Optional pre-calculated order quantities per SKU
  *                                (used when splitting by container to preserve full PO totals)
+ *                                Key format: "PO:inventoryId"
  */
 export function toAcumaticaRows(
   packingList: ParsedPackingList,
@@ -123,17 +128,21 @@ export function toAcumaticaRows(
   // Use pre-calculated totals if provided, otherwise calculate from this packing list
   const orderQtyBySku = preCalculatedOrderQty || calculateOrderQtyBySku(packingList, weightType);
 
-  // Strip any suffix (e.g., "-5") from PO number for the Order Number column
-  const orderNumber = packingList.poNumber.replace(/-\d+$/, '');
-
   return packingList.items.map((item) => {
     const weights = getWeight(item, weightType);
+
+    // Use item-level PO if available, otherwise fall back to packing list PO
+    const itemPo = item.poNumber || packingList.poNumber;
+    // Strip any suffix (e.g., "-5") from PO number for the Order Number column
+    const orderNumber = itemPo.replace(/-\d+$/, '');
+
     // Unit cost: blank by default - price data comes from invoice, not packing list
     // User can manually enter via unitCostOverride
     const unitCost = item.unitCostOverride ?? 0;
 
-    // OrderQty: use override if set, otherwise calculated per SKU
-    const orderQty = item.orderQtyOverride ?? orderQtyBySku[item.inventoryId];
+    // OrderQty: use override if set, otherwise calculated per SKU (scoped by PO)
+    const orderQtyKey = `${itemPo}:${item.inventoryId}`;
+    const orderQty = item.orderQtyOverride ?? orderQtyBySku[orderQtyKey] ?? 0;
 
     // Warehouse: use item-level override if set
     const itemWarehouse = item.warehouse || warehouse;
@@ -149,7 +158,7 @@ export function toAcumaticaRows(
       pieceCount: item.pieceCount,
       heatNumber: item.heatNumber,
       grossWeight: weights.gross,
-      orderQty, // Sum of container qty for this SKU, or override
+      orderQty, // Sum of container qty for this SKU within same PO, or override
       container: weights.net, // Individual line container qty
       unitCost,
       warehouse: itemWarehouse,
@@ -273,7 +282,7 @@ function generateFilename(poNumber: string, containerNumber: string | undefined)
 }
 
 /**
- * Split packing list by container and download separate files
+ * Split packing list by container (and PO for multi-PO files) and download separate files
  * Preserves full PO order quantities on each container's export
  */
 export function downloadByContainer(
@@ -281,14 +290,29 @@ export function downloadByContainer(
   warehouse: string = DEFAULT_WAREHOUSE,
   weightType: WeightType = 'actual'
 ): void {
-  // Get unique container numbers
-  const containers = [...new Set(packingList.items.map(item => item.containerNumber).filter(Boolean))];
+  // Group items by container AND PO (for multi-PO packing lists)
+  const groupedItems = new Map<string, PackingListItem[]>();
 
-  if (containers.length <= 1) {
-    // Only one or no containers, download as single file
-    const containerNum = containers[0];
-    const filename = generateFilename(packingList.poNumber, containerNum);
-    downloadExcel(packingList, warehouse, weightType, filename);
+  packingList.items.forEach(item => {
+    const itemPo = item.poNumber || packingList.poNumber;
+    const container = item.containerNumber || '';
+    const key = `${itemPo}|${container}`;
+
+    if (!groupedItems.has(key)) {
+      groupedItems.set(key, []);
+    }
+    groupedItems.get(key)!.push(item);
+  });
+
+  if (groupedItems.size <= 1) {
+    // Only one group, download as single file
+    const firstGroup = groupedItems.entries().next().value;
+    if (firstGroup) {
+      const [key] = firstGroup;
+      const [po, container] = key.split('|');
+      const filename = generateFilename(po, container || undefined);
+      downloadExcel(packingList, warehouse, weightType, filename);
+    }
     return;
   }
 
@@ -296,22 +320,23 @@ export function downloadByContainer(
   // This ensures each container's export shows the total PO quantity, not just that container's portion
   const fullOrderQtyBySku = calculateOrderQtyBySku(packingList, weightType);
 
-  // Multiple containers - create separate files
-  containers.forEach((containerNum) => {
-    const containerItems = packingList.items.filter(item => item.containerNumber === containerNum);
+  // Multiple groups - create separate files for each PO/container combination
+  groupedItems.forEach((items, key) => {
+    const [po, container] = key.split('|');
 
-    const containerPackingList: ParsedPackingList = {
+    const groupPackingList: ParsedPackingList = {
       ...packingList,
-      items: containerItems,
-      totalGrossWeightLbs: containerItems.reduce((sum, item) => sum + item.grossWeightLbs, 0),
-      totalNetWeightLbs: containerItems.reduce((sum, item) => sum + item.containerQtyLbs, 0),
+      poNumber: po,
+      items: items,
+      totalGrossWeightLbs: items.reduce((sum, item) => sum + item.grossWeightLbs, 0),
+      totalNetWeightLbs: items.reduce((sum, item) => sum + item.containerQtyLbs, 0),
     };
 
     // Pass the full PO order quantities to preserve totals
-    const blob = exportToExcel(containerPackingList, warehouse, weightType, fullOrderQtyBySku);
+    const blob = exportToExcel(groupPackingList, warehouse, weightType, fullOrderQtyBySku);
     const url = URL.createObjectURL(blob);
 
-    const filename = generateFilename(packingList.poNumber, containerNum);
+    const filename = generateFilename(po, container || undefined);
     const link = document.createElement('a');
     link.href = url;
     link.download = filename;
