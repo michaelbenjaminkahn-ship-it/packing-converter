@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { ParsedPackingList, PackingListItem } from '../types';
 import { getLbsPerSqFt, WAREHOUSES } from '../utils/constants';
 
@@ -342,12 +342,23 @@ export function EditableResultsTable({
               <span className="text-slate-500">Vendor Code:</span>{' '}
               <span className="font-medium font-mono text-slate-700">{result.vendorCode}</span>
             </div>
-            {result.poNumber && (
-              <div>
-                <span className="text-slate-500">PO #:</span>{' '}
-                <span className="font-medium text-slate-700">{result.poNumber}</span>
-              </div>
-            )}
+            {(() => {
+              // Get unique PO numbers from items (item.poNumber takes precedence over result.poNumber)
+              const uniquePOs = [...new Set(
+                result.items.map(item => item.poNumber || result.poNumber).filter(Boolean)
+              )];
+              if (uniquePOs.length === 0) return null;
+              return (
+                <div>
+                  <span className="text-slate-500">{uniquePOs.length > 1 ? 'POs:' : 'PO #:'}</span>{' '}
+                  <span className="font-medium text-slate-700">
+                    {uniquePOs.length <= 3
+                      ? uniquePOs.join(', ')
+                      : `${uniquePOs.slice(0, 2).join(', ')} +${uniquePOs.length - 2} more`}
+                  </span>
+                </div>
+              );
+            })()}
             <div>
               <span className="text-slate-500">Items:</span>{' '}
               <span className="font-medium text-slate-700">{result.items.length}</span>
@@ -479,91 +490,160 @@ export function EditableResultsTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {result.items.map((item, index) => {
-              // Get weight based on weight type selection
-              const theoreticalWeights = calculateTheoreticalWeights(item);
-              const displayGrossWeight = weightType === 'theoretical'
-                ? theoreticalWeights.totalWeight  // Includes skid for #1 finish (what's on the scale)
-                : item.grossWeightLbs;
-              const displayContainerWeight = weightType === 'theoretical'
-                ? theoreticalWeights.steelWeight  // Pure steel weight only (inventory weight)
-                : item.containerQtyLbs;
+            {(() => {
+              // Group items by container (and PO for multi-PO packing lists)
+              const groupedItems: { key: string; po: string; container: string; items: { item: PackingListItem; index: number }[] }[] = [];
+              const groupMap = new Map<string, { po: string; container: string; items: { item: PackingListItem; index: number }[] }>();
 
-              // Calculate OrderQty: sum of PURE STEEL weights (no skid) for all items with same inventoryId (SKU)
-              const calculatedOrderQty = result.items
-                .filter(i => i.inventoryId === item.inventoryId)
-                .reduce((sum, i) => {
-                  const itemWeight = weightType === 'theoretical'
-                    ? calculateTheoreticalWeights(i).steelWeight  // Pure steel, no skid for Order Qty
-                    : i.containerQtyLbs;
-                  return sum + itemWeight;
+              result.items.forEach((item, index) => {
+                const itemPo = item.poNumber || result.poNumber;
+                const container = item.containerNumber || '';
+                const key = `${itemPo}|${container}`;
+
+                if (!groupMap.has(key)) {
+                  const group = { po: itemPo, container, items: [] as { item: PackingListItem; index: number }[] };
+                  groupMap.set(key, group);
+                  groupedItems.push({ key, ...group });
+                }
+                groupMap.get(key)!.items.push({ item, index });
+              });
+
+              // Determine if we have multiple containers/POs to show headers
+              const showContainerHeaders = groupedItems.length > 1;
+
+              return groupedItems.map((group) => {
+                // Calculate group totals
+                const groupGross = group.items.reduce((sum, { item }) => {
+                  const wt = weightType === 'theoretical'
+                    ? calculateTheoreticalWeights(item).totalWeight
+                    : item.grossWeightLbs;
+                  return sum + wt;
                 }, 0);
-              const orderQty = item.orderQtyOverride ?? calculatedOrderQty;
+                const groupNet = group.items.reduce((sum, { item }) => {
+                  const wt = weightType === 'theoretical'
+                    ? calculateTheoreticalWeights(item).steelWeight
+                    : item.containerQtyLbs;
+                  return sum + wt;
+                }, 0);
 
-              // Unit cost: use invoice price if available, otherwise blank
-              // unitCostOverride can be set from invoice parsing or manual entry
-              const unitCost = item.unitCostOverride ?? '';
+                return (
+                  <React.Fragment key={group.key}>
+                    {/* Container/PO header row */}
+                    {showContainerHeaders && (
+                      <tr className="bg-navy-100 border-t-2 border-navy-200">
+                        <td colSpan={13} className="px-3 py-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              {group.container && (
+                                <span className="font-semibold text-navy-800 text-sm flex items-center gap-1.5">
+                                  <svg className="w-4 h-4 text-navy-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                                  </svg>
+                                  {group.container}
+                                </span>
+                              )}
+                              <span className="text-xs text-navy-600">
+                                PO: <span className="font-medium">{group.po}</span>
+                              </span>
+                              <span className="text-xs text-navy-500">
+                                {group.items.length} item{group.items.length !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-4 text-xs text-navy-600">
+                              <span>Gross: <span className="font-medium">{groupGross.toLocaleString()} lbs</span></span>
+                              <span>Net: <span className="font-medium">{groupNet.toLocaleString()} lbs</span></span>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {/* Items in this group */}
+                    {group.items.map(({ item, index }, itemIdx) => {
+                      // Get weight based on weight type selection
+                      const theoreticalWeights = calculateTheoreticalWeights(item);
+                      const displayGrossWeight = weightType === 'theoretical'
+                        ? theoreticalWeights.totalWeight
+                        : item.grossWeightLbs;
+                      const displayContainerWeight = weightType === 'theoretical'
+                        ? theoreticalWeights.steelWeight
+                        : item.containerQtyLbs;
 
-              // Warehouse: use item-level override or default
-              const itemWarehouse = item.warehouse || warehouse;
+                      // Calculate OrderQty: sum for all items with same inventoryId AND same PO
+                      const itemPo = item.poNumber || result.poNumber;
+                      const calculatedOrderQty = result.items
+                        .filter(i => i.inventoryId === item.inventoryId && (i.poNumber || result.poNumber) === itemPo)
+                        .reduce((sum, i) => {
+                          const itemWeight = weightType === 'theoretical'
+                            ? calculateTheoreticalWeights(i).steelWeight
+                            : i.containerQtyLbs;
+                          return sum + itemWeight;
+                        }, 0);
+                      const orderQty = item.orderQtyOverride ?? calculatedOrderQty;
 
-              return (
-                <tr
-                  key={`${item.lineNumber}-${index}`}
-                  className={`hover:bg-navy-50/50 transition-colors duration-150 ${
-                    index % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'
-                  }`}
-                >
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">
-                    {item.lineNumber}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'inventoryId', item.inventoryId, false, true)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-600">
-                    {renderEditableCell(index, 'lotSerialNbr', item.lotSerialNbr, false, true)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'pieceCount', item.pieceCount, true)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'grossWeightLbs', displayGrossWeight, true)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'orderQtyOverride', orderQty, true, false, 2)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'containerQtyLbs', displayContainerWeight, true)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'unitCostOverride', unitCost, true, false, 4)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-500">
-                    {renderEditableCell(index, 'heatNumber', item.heatNumber || '')}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-600">
-                    {renderEditableCell(index, 'warehouse', itemWarehouse)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400 text-center">
-                    LB
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
-                    {renderEditableCell(index, 'orderLineNbrOverride', item.orderLineNbrOverride ?? '', true)}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-xs text-center">
-                    <button
-                      onClick={() => deleteRow(index)}
-                      className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-all duration-200"
-                      title="Delete row"
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
+                      const unitCost = item.unitCostOverride ?? '';
+                      const itemWarehouse = item.warehouse || warehouse;
+
+                      return (
+                        <tr
+                          key={`${item.lineNumber}-${index}`}
+                          className={`hover:bg-navy-50/50 transition-colors duration-150 ${
+                            itemIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'
+                          }`}
+                        >
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400">
+                            {item.lineNumber}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
+                            {renderEditableCell(index, 'inventoryId', item.inventoryId, false, true)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-600">
+                            {renderEditableCell(index, 'lotSerialNbr', item.lotSerialNbr, false, true)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
+                            {renderEditableCell(index, 'pieceCount', item.pieceCount, true)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
+                            {renderEditableCell(index, 'grossWeightLbs', displayGrossWeight, true)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
+                            {renderEditableCell(index, 'orderQtyOverride', orderQty, true, false, 2)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
+                            {renderEditableCell(index, 'containerQtyLbs', displayContainerWeight, true)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
+                            {renderEditableCell(index, 'unitCostOverride', unitCost, true, false, 4)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-500">
+                            {renderEditableCell(index, 'heatNumber', item.heatNumber || '')}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-600">
+                            {renderEditableCell(index, 'warehouse', itemWarehouse)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-400 text-center">
+                            LB
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-slate-700">
+                            {renderEditableCell(index, 'orderLineNbrOverride', item.orderLineNbrOverride ?? '', true)}
+                          </td>
+                          <td className="px-2 py-1.5 whitespace-nowrap text-xs text-center">
+                            <button
+                              onClick={() => deleteRow(index)}
+                              className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1 rounded transition-all duration-200"
+                              title="Delete row"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                );
+              });
+            })()}
           </tbody>
           <tfoot className="bg-slate-50 border-t border-slate-200">
             {(() => {
