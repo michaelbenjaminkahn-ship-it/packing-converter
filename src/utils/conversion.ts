@@ -328,10 +328,14 @@ export function buildInventoryId(size: ParsedSize, supplier: Supplier, finish?: 
   }
 
   // 1. Check manual mappings first (highest priority - overrides for known outliers)
+  const lookupKey = `${size.thickness.toFixed(4)}-${size.width}-${size.length}`;
+  console.log(`[DEBUG] Checking manual mapping for key: "${lookupKey}"`);
   const mapping = getMappedInventoryId(size.thickness, size.width, size.length);
   if (mapping) {
+    console.log(`[DEBUG] Found mapping: ${mapping.inventoryId}`);
     return mapping.inventoryId;
   }
+  console.log(`[DEBUG] No mapping found for key: "${lookupKey}"`)
 
   // 2. Check uploaded inventory list
   const uploadedMatch = findInventoryIdBySize(size.thickness, size.width, size.length, finishCode);
