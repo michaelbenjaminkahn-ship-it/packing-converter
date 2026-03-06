@@ -79,7 +79,14 @@ export function getMappedInventoryId(
 ): InventoryMapping | null {
   // Round width/length to integers for key matching
   const key = `${thickness.toFixed(4)}-${Math.round(width)}-${Math.round(length)}`;
-  return INVENTORY_MAPPINGS[key] || null;
+  console.log(`[MAPPING DEBUG] thickness=${thickness}, width=${width}, length=${length}`);
+  console.log(`[MAPPING DEBUG] key="${key}", exists=${key in INVENTORY_MAPPINGS}`);
+  console.log(`[MAPPING DEBUG] Available keys:`, Object.keys(INVENTORY_MAPPINGS));
+  const result = INVENTORY_MAPPINGS[key] || null;
+  if (result) {
+    console.log(`[MAPPING DEBUG] FOUND: ${result.inventoryId}`);
+  }
+  return result;
 }
 
 /**

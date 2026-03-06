@@ -788,6 +788,7 @@ function parseYuenChangText(text: string, _poNumber: string): PackingListItem[] 
       // Convert gauge to decimal thickness
       const gaugeKey = `${rowData.gauge}GA`;
       const thickness = GAUGE_TO_DECIMAL[gaugeKey] || GAUGE_TO_DECIMAL[String(rowData.gauge)] || rowData.gauge / 1000;
+      console.log(`[YC PARSE DEBUG] gauge=${rowData.gauge}, gaugeKey=${gaugeKey}, thickness=${thickness}, width=${rowData.width}, length=${rowData.length}`);
 
       const size = {
         thickness,
