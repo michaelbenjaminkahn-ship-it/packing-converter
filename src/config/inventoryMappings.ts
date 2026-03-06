@@ -27,12 +27,24 @@ export interface InventoryMapping {
  *   "0.1875-48-120": 3/16" x 48" x 120"
  */
 export const INVENTORY_MAPPINGS: Record<string, InventoryMapping> = {
-  // Example mappings - add your custom mappings here
-  // "0.4375-60-360": {
-  //   inventoryId: "0.4375-60__-360__-304/304L-#1____",
-  //   lbsPerSqFt: 19.08,
-  //   notes: "7/16\" hot rolled plate"
-  // },
+  // Wuu Jing plate sizes that frequently generate with wrong formatting
+  // (missing leading zero, truncated thickness, or missing finish from uploaded inventory lists)
+  "0.1875-48-96": {
+    inventoryId: "0.1875-48__-96___-304/304L-#1____",
+    notes: '3/16" x 48" x 96" hot rolled plate',
+  },
+  "0.1875-48-120": {
+    inventoryId: "0.1875-48__-120__-304/304L-#1____",
+    notes: '3/16" x 48" x 120" hot rolled plate',
+  },
+  "0.1875-60-120": {
+    inventoryId: "0.1875-60__-120__-304/304L-#1____",
+    notes: '3/16" x 60" x 120" hot rolled plate',
+  },
+  "0.3750-48-96": {
+    inventoryId: "0.375-48__-96___-304/304L-#1____",
+    notes: '3/8" x 48" x 96" hot rolled plate',
+  },
 };
 
 /**

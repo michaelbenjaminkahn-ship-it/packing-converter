@@ -327,16 +327,16 @@ export function buildInventoryId(size: ParsedSize, supplier: Supplier, finish?: 
     finishCode = FINISH_CODES[supplier] || FINISH_CODES['wuu-jing'];
   }
 
-  // 1. Check uploaded inventory list first (highest priority)
-  const uploadedMatch = findInventoryIdBySize(size.thickness, size.width, size.length, finishCode);
-  if (uploadedMatch) {
-    return uploadedMatch;
-  }
-
-  // 2. Check for manual mapping
+  // 1. Check manual mappings first (highest priority - overrides for known outliers)
   const mapping = getMappedInventoryId(size.thickness, size.width, size.length);
   if (mapping) {
     return mapping.inventoryId;
+  }
+
+  // 2. Check uploaded inventory list
+  const uploadedMatch = findInventoryIdBySize(size.thickness, size.width, size.length, finishCode);
+  if (uploadedMatch) {
+    return uploadedMatch;
   }
 
   // 3. Auto-generate with proper Acumatica padding
