@@ -27,23 +27,23 @@ export interface InventoryMapping {
  *   "0.1875-48-120": 3/16" x 48" x 120"
  */
 export const INVENTORY_MAPPINGS: Record<string, InventoryMapping> = {
-  // Wuu Jing plate sizes that frequently generate with wrong formatting
-  // (missing leading zero, truncated thickness, or missing finish from uploaded inventory lists)
+  // Acumatica-specific inventory IDs that don't follow standard formatting
+  // These are the exact IDs in Acumatica's system
   "0.1875-48-96": {
-    inventoryId: "0.1875-48__-96___-304/304L-#1____",
-    notes: '3/16" x 48" x 96" hot rolled plate',
+    inventoryId: ".1875-48__-96___-304/304L-#1____",
+    notes: '3/16" x 48" x 96" - Acumatica uses .1875 (no leading zero)',
   },
   "0.1875-48-120": {
-    inventoryId: "0.1875-48__-120__-304/304L-#1____",
-    notes: '3/16" x 48" x 120" hot rolled plate',
+    inventoryId: "0.187-48__-120__-304/304L-#1____",
+    notes: '3/16" x 48" x 120" - Acumatica uses 0.187 (truncated)',
   },
   "0.1875-60-120": {
-    inventoryId: "0.1875-60__-120__-304/304L-#1____",
-    notes: '3/16" x 60" x 120" hot rolled plate',
+    inventoryId: ".1875-60__-120__-304/304L-#1____",
+    notes: '3/16" x 60" x 120" - Acumatica uses .1875 (no leading zero)',
   },
   "0.3750-48-96": {
-    inventoryId: "0.375-48__-96___-304/304L-#1____",
-    notes: '3/8" x 48" x 96" hot rolled plate',
+    inventoryId: "0.375-48__-96___-304/304L-______",
+    notes: '3/8" x 48" x 96" - Acumatica uses blank finish',
   },
 };
 
