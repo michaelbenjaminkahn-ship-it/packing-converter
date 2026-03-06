@@ -77,7 +77,8 @@ export function getMappedInventoryId(
   width: number,
   length: number
 ): InventoryMapping | null {
-  const key = `${thickness.toFixed(4)}-${width}-${length}`;
+  // Round width/length to integers for key matching
+  const key = `${thickness.toFixed(4)}-${Math.round(width)}-${Math.round(length)}`;
   return INVENTORY_MAPPINGS[key] || null;
 }
 
